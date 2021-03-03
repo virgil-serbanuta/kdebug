@@ -100,6 +100,7 @@ class Node:
   def __init__(self, number):
     self.__number = number
     self.__state = Node.NORMAL
+    self.__konfig = []
 
   def number(self):
     return self.__number
@@ -108,7 +109,16 @@ class Node:
     self.__state = state
 
   def getKonfig(self):
-    return str(self)
+    if self.hasKonfig():
+      return [str(self)] + self.__konfig
+    else:
+      return ['Not loaded yet: %s.' % str(self)]
+
+  def hasKonfig(self):
+    return bool(self.__konfig)
+
+  def setKonfig(self, konfig):
+    self.__konfig = konfig
 
   def __str__(self):
     if self.__state == Node.NORMAL:
@@ -229,6 +239,7 @@ class Handler:
     self.__log = log
     self.__pending_commands = []
     self.__unexpanded_nodes = []
+    self.__unknown_konfigs = []
     self.__parsers = []
     self.__nodes_seen = set([])
     self.__node_tree = NodeTree(0, message_thread)
@@ -252,38 +263,21 @@ class Handler:
       self.__unexpanded_nodes.append(config_number)
 
     if not self.__pending_commands:
+      self.__getKonfigIfNeeded()
+
+    if not self.__pending_commands:
       self.__expandNodeIfNeeded()
 
+    # TODO: remove
+    if config_number == 0 and not self.__node_tree.findNode(config_number).hasKonfig():
+      self.__unknown_konfigs.append(0)
+
     if self.__pending_commands:
-      self.__parsersPrepareForStep()
-      self.__sendCommand(self.__pending_commands[0])
+      # self.__parsersPrepareForStep()
+      self.__pending_commands[0]()
       self.__pending_commands = self.__pending_commands[1:]
     else:
       self.__state = Handler.PROMPT_IDLE
-
-    """
-    if self.__state.get() == Handler.STARTING:
-      assert config_number == 0
-      self.__nodes_seen.add(config_number)
-      self.__parsersPrepareForStep()  # Must be called before the step command
-      self.__sendCommand(b'step\n')
-      self.__state.set(Handler.STEPPING)
-    else:
-      if not config_number in self.__nodes_seen:
-        self.__node_tree.addChild(self.__last_config_number, config_number)
-        self.__nodes_seen.add(config_number)
-        self.__unexpanded_nodes.append(config_number)
-      if not self.__pending_commands:
-        self.__expandNodeIfNeeded()
-      if self.__pending_commands:
-        self.__parsersPrepareForStep()
-        self.__sendCommand(self.__pending_commands[0])
-        self.__pending_commands = self.__pending_commands[1:]
-      else:
-        # self.__node_tree.print(0)
-        self.__sendCommand(b'exit\n')
-        self.__life.die()
-    """
 
     self.__last_config_number = config_number
     if last_command.startswith('step'):
@@ -291,14 +285,10 @@ class Handler:
     self.__next_node_state = Node.NORMAL
 
   def onBranches(self, steps, branches):
-    # print("steps=%d branches=%s" % (steps, branches))
     self.__node_tree.addChildren(self.__last_config_number, branches)
     for c in branches:
       self.__nodes_seen.add(c)
-    # self.__parsersPrepareForStep()
     self.__unexpanded_nodes += branches
-    # self.__pending_commands.append(bytes('select %d\n' % branches[0], 'ascii'))
-    # self.__pending_commands.append(b'step 100\n')
 
   def onProofEnd(self, steps):
     if self.__end_state.isStuck():
@@ -307,7 +297,9 @@ class Handler:
       self.__next_node_state = Node.PROOF_END_FAILED
     else:
       self.__next_node_state = Node.PROOF_END
-    # self.__parsersPrepareForStep()
+
+  def onKonfig(self, node_id, konfig_lines):
+    self.__node_tree.findNode(node_id).setKonfig(konfig_lines)
 
   def setParsers(self, parsers):
     self.__parsers = parsers
@@ -326,11 +318,25 @@ class Handler:
     for p in self.__parsers:
       p.prepareForStep()
 
+  def __parsersPrepareForKonfig(self):
+    for p in self.__parsers:
+      p.prepareForKonfig()
+
+  def __getKonfigIfNeeded(self):
+    if self.__unknown_konfigs:
+      node_id = self.__unknown_konfigs[0]
+      self.__unknown_konfigs = self.__unknown_konfigs[1:]
+
+      self.__pending_commands.append(lambda: self.__selectConfig(node_id))
+      self.__pending_commands.append(self.__konfig)
+
   def __expandNodeIfNeeded(self):
     if self.__unexpanded_nodes:
-      self.__pending_commands.append(bytes('select %d\n' % self.__unexpanded_nodes[0], 'ascii'))
-      self.__pending_commands.append(b'step\n')
+      node_id = self.__unexpanded_nodes[0]
       self.__unexpanded_nodes = self.__unexpanded_nodes[1:]
+
+      self.__pending_commands.append(lambda: self.__selectConfig(node_id))
+      self.__pending_commands.append(self.__step)
 
   def __selectConfig(self, config_number):
     self.__parsersPrepareForStep()
@@ -339,6 +345,10 @@ class Handler:
   def __step(self):
     self.__parsersPrepareForStep()
     self.__sendCommand(b'step\n')
+
+  def __konfig(self):
+    self.__parsersPrepareForKonfig()
+    self.__sendCommand(b'konfig\n')
 
   def __sendCommand(self, command):
     self.__stdin.write(command)
@@ -395,6 +405,10 @@ class StdErrParser:
     self.__string_finder.reset()
     self.__message_thread.add(self.__end_state.reset)
 
+  def prepareForKonfig(self):
+    self.__string_finder.reset()
+    self.__message_thread.add(self.__end_state.reset)
+
 def communicateWithStdErr(stderr, life, stdErrParser):
   try:
     while life.isRunning():
@@ -416,12 +430,15 @@ class OutputParser:
   STARTING = 0
   AT_PROMPT = 1
   STEPPING = 2
+  KONFIG = 3
 
   STATE_START = 0
   STATE_NUMBER = 1
   STATE_PROMPT_after_number = 2
   STATE_SPLIT_after_steps = 3
   STATE_SPLIT_branches = 4
+  STATE_CONFIG_START_after_number = 5
+  STATE_IN_CONFIG = 6
 
   STR_PROMPT_Kore_p = 1
   STR_PROMPT_Kore_pnp_gt_ = 2
@@ -430,6 +447,8 @@ class OutputParser:
   STR_SPLIT_BRANCHES_COMMA = 5
   STR_SPLIT_BRANCHES_END = 6
   STR_SPLIT_PROOF_END = 7
+  STR_CONFIG_START_before_number = 8
+  STR_CONFIG_START_after_number = 9
 
   BYTES_PREFIX = b'\x00\xff\x00'
 
@@ -438,7 +457,10 @@ class OutputParser:
     self.__substate = OutputParser.STATE_START
     self.__number = 0
     self.__step_number = 0
+    self.__konfig_number = 0
     self.__branches = []
+    self.__konfig_line = []
+    self.__konfig_lines = []
     self.__substate_after_number = OutputParser.STATE_START
     self.__log = log
     self.__handler = handler
@@ -453,14 +475,24 @@ class OutputParser:
             (OutputParser.BYTES_PREFIX + b']', OutputParser.STR_SPLIT_BRANCHES_END),
             (OutputParser.BYTES_PREFIX + b' step(s) due to reaching end of proof on current branch.', OutputParser.STR_SPLIT_PROOF_END)
         ])
+    self.__konfig_string_finder = StringFinder(
+        [
+            (b'\nKore (', OutputParser.STR_PROMPT_Kore_p),
+            (OutputParser.BYTES_PREFIX + b')> ', OutputParser.STR_PROMPT_Kore_pnp_gt_),
+            (b'\nConfig at node ', OutputParser.STR_CONFIG_START_before_number),
+            (OutputParser.BYTES_PREFIX + b' is:', OutputParser.STR_CONFIG_START_after_number)
+        ])
 
-  def process(self, byte):
-    self.__log.write(byte)
-    self.__log.flush()
+  def process(self, byte, log=True):
+    if log:
+      self.__log.write(byte)
+      self.__log.flush()
     if self.__state == OutputParser.STARTING:
-      self.__processWaitForPrompt(byte)
+      self.__processWaitForPromptStepping(byte)
     elif self.__state == OutputParser.STEPPING:
-      self.__processWaitForPrompt(byte)
+      self.__processWaitForPromptStepping(byte)
+    elif self.__state == OutputParser.KONFIG:
+      self.__processWaitForPromptKonfig(byte)
     else:
       print("%s %d" % ([byte], self.__state))
       raise "issue"
@@ -473,27 +505,22 @@ class OutputParser:
     self.__string_finder.reset()
     self.process(b'\n')
 
-  def __processWaitForPrompt(self, byte):
-    if self.__substate == OutputParser.STATE_START:
-      found = self.__string_finder.processByte(byte)
+  # TODO: Called from different thread, make it thread safe.
+  def prepareForKonfig(self):
+    self.__log.write(b'Reset Konfig\n')
+    self.__state = OutputParser.KONFIG
+    self.__substate = OutputParser.STATE_START
+    self.__string_finder.reset()
+    self.process(b'\n')
+
+  def __processPromptState(self, found):
+    if self.__substate == OutputParser.STATE_START or self.__substate == OutputParser.STATE_IN_CONFIG:
       if OutputParser.STR_PROMPT_Kore_p in found:
         self.__number = 0
         self.__substate = OutputParser.STATE_NUMBER
         self.__substate_after_number = OutputParser.STATE_PROMPT_after_number
-      elif OutputParser.STR_SPLIT in found:
-        assert self.__state == OutputParser.STEPPING
-        self.__number = 0
-        self.__substate = OutputParser.STATE_NUMBER
-        self.__substate_after_number = OutputParser.STATE_SPLIT_after_steps
-    elif self.__substate == OutputParser.STATE_NUMBER:
-      if b'0' <= byte and byte <= b'9':
-        self.__number = 10 * self.__number + (byte[0] - (b'0')[0])
-      else:
-        self.__string_finder.processBytes(OutputParser.BYTES_PREFIX)
-        self.__substate = self.__substate_after_number
-        self.__processWaitForPrompt(byte)
-    elif self.__substate == OutputParser.STATE_PROMPT_after_number:
-      found = self.__string_finder.processByte(byte)
+        return True
+    if self.__substate == OutputParser.STATE_PROMPT_after_number:
       if OutputParser.STR_PROMPT_Kore_pnp_gt_ in found:
         self.__log.write(b'onAtPrompt')
         self.__message_thread.add(
@@ -504,12 +531,78 @@ class OutputParser:
         self.process(b'\n')
       else:
         assert not found
+      return True
+    return False
+
+  def __processNumber(self, byte, string_finder):
+    if self.__substate == OutputParser.STATE_NUMBER:
+      if b'0' <= byte and byte <= b'9':
+        self.__number = 10 * self.__number + (byte[0] - (b'0')[0])
+      else:
+        string_finder.processBytes(OutputParser.BYTES_PREFIX)
+        self.__substate = self.__substate_after_number
+        self.process(byte, False)
+      return True
+    return False
+
+  def __processWaitForPromptKonfig(self, byte):
+    found = self.__konfig_string_finder.processByte(byte)
+
+    if self.__processPromptState(found):
+      if self.__substate == OutputParser.STATE_START:
+        assert self.__konfig_lines
+        self.__log.write(bytes('onKonfig(%d, [%s, ...])' % (self.__konfig_number, self.__konfig_lines[0]), 'ascii'))
+        self.__message_thread.add(
+            self.__handler.onKonfig,
+            self.__konfig_number,
+            self.__konfig_lines
+        )
+      return
+    if self.__processNumber(byte, self.__konfig_string_finder):
+      return
+
+    if self.__substate == OutputParser.STATE_START:
+      if OutputParser.STR_CONFIG_START_before_number in found:
+        assert self.__state == OutputParser.KONFIG
+        self.__number = 0
+        self.__substate = OutputParser.STATE_NUMBER
+        self.__substate_after_number = OutputParser.STATE_CONFIG_START_after_number
+      return
+    if self.__substate == OutputParser.STATE_CONFIG_START_after_number:
+      if OutputParser.STR_CONFIG_START_after_number in found:
+        assert self.__state == OutputParser.KONFIG
+        self.__konfig_number = self.__number
+        self.__substate = OutputParser.STATE_IN_CONFIG
+        self.__konfig_line = []
+        self.__konfig_lines = []
+    elif self.__substate == OutputParser.STATE_IN_CONFIG: 
+      if byte == b'\n':
+        if self.__konfig_line:
+          self.__konfig_lines.append(b''.join(self.__konfig_line).decode('ascii'))
+          self.__konfig_line = []
+      else:
+        self.__konfig_line.append(byte)
+
+  def __processWaitForPromptStepping(self, byte):
+    found = self.__string_finder.processByte(byte)
+
+    if self.__processPromptState(found):
+      return
+    if self.__processNumber(byte, self.__string_finder):
+      return
+
+    if self.__substate == OutputParser.STATE_START:
+      if OutputParser.STR_SPLIT in found:
+        assert self.__state == OutputParser.STEPPING
+        self.__number = 0
+        self.__substate = OutputParser.STATE_NUMBER
+        self.__substate_after_number = OutputParser.STATE_SPLIT_after_steps
+      return
     elif self.__substate == OutputParser.STATE_SPLIT_after_steps:
       if self.__number >= 0:
         self.__step_number = self.__number
         self.__number = -1
         self.__branches = []
-      found = self.__string_finder.processByte(byte)
       if OutputParser.STR_SPLIT_BRANCHES in found:
         self.__number = 0
         self.__substate = OutputParser.STATE_NUMBER
@@ -528,7 +621,6 @@ class OutputParser:
       if self.__number >= 0:
         self.__branches.append(self.__number)
         self.__number = -1
-      found = self.__string_finder.processByte(byte)
       if OutputParser.STR_SPLIT_BRANCHES_COMMA in found:
         self.__number = 0
         self.__substate = OutputParser.STATE_NUMBER
@@ -772,7 +864,7 @@ class KonfigWindow(Window):
     self.__node_id = node_id
 
   def __printKonfig(self, node, output):
-    output.append(node.getKonfig())
+    output += node.getKonfig()
 
 class WindowEvents:
   def __init__(self, window, display):
