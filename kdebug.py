@@ -12,7 +12,7 @@ debug = []
 UI_THREAD = None
 
 def assertOnUIThread():
-  assert threading.current_thread().indent == UI_THREAD.indent
+  assert threading.current_thread().ident == UI_THREAD.ident
 
 class StringFinder:
   def __init__(self, bytes_to_id):
@@ -43,7 +43,6 @@ class StringFinder:
           retv.append(current_id)
         else:
           self.__positions.append((i, 1))
-    #print(self.__positions)
     return retv
 
   def processBytes(self, bs):
@@ -507,8 +506,7 @@ class OutputParser:
     elif self.__state == OutputParser.KONFIG:
       self.__processWaitForPromptKonfig(byte)
     else:
-      print("%s %d" % ([byte], self.__state))
-      raise "issue"
+      assert False, ("%s %d" % ([byte], self.__state))
 
   # TODO: Called from different thread, make it thread safe.
   def prepareForStep(self):
@@ -700,56 +698,62 @@ class Window:
     self.__line_change_listeners = []
     self.__focused = False
 
-  def setCoords(self, minX, minY, maxX, maxY):
+  def setCoords_UI(self, minX, minY, maxX, maxY):
+    assertOnUIThread()
     self.__minX = minX
     self.__minY = minY
     self.__maxX = maxX
     self.__maxY = maxY
 
-    available = self.availableY()
+    available = self.availableY_UI()
     if self.__currentY >= available + self.__offsetY:
       self.__currentY = available + self.__offsetY - 1
 
-    self.assertConsistent()
+    self.assertConsistent_UI()
 
-  def setFocused(self, focused):
+  def setFocused_UI(self, focused):
+    assertOnUIThread()
     self.__focused = focused
 
-  def assertConsistent(self):
+  def assertConsistent_UI(self):
+    assertOnUIThread()
     assert self.__minX >= 0
     assert self.__minY >= 0
     assert self.__maxX > self.__minX
     assert self.__maxY > self.__minY
-    assert self.availableY() > 0
-    assert self.availableX() > 0
+    assert self.availableY_UI() > 0
+    assert self.availableX_UI() > 0
 
     assert self.__currentY >= 0
     assert (self.__currentY < len(self.__lines)) or (not self.__lines), "currentY=%d lines=%s" % (self.__currentY, self.__lines)
     assert self.__currentY >= self.__offsetY
-    assert self.__currentY - self.__offsetY < self.availableY()
+    assert self.__currentY - self.__offsetY < self.availableY_UI()
 
-  def up(self):
-    self.assertConsistent()
+  def up_UI(self):
+    assertOnUIThread()
+    self.assertConsistent_UI()
     if self.__currentY == 0:
       return
     if self.__currentY == self.__offsetY:
       self.__offsetY -= 1
     self.__currentY -= 1
-    self.assertConsistent()
+    self.assertConsistent_UI()
     self.__callLineChangeListeners()
 
-  def down(self):
-    self.assertConsistent()
+  def down_UI(self):
+    assertOnUIThread()
+    self.assertConsistent_UI()
     if self.__currentY == len(self.__lines) - 1 or (not self.__lines):
       return
     self.__currentY += 1
-    if self.__currentY == self.__offsetY + self.availableY():
+    if self.__currentY == self.__offsetY + self.availableY_UI():
       self.__offsetY += 1
-    self.assertConsistent()
+    self.assertConsistent_UI()
     self.__callLineChangeListeners()
 
-  def setDrawLines(self, lines):
-    self.assertConsistent()
+  def setDrawLines_UI(self, lines):
+    assertOnUIThread()
+    self.assertConsistent_UI()
 
     self.__lines = lines
 
@@ -759,13 +763,14 @@ class Window:
         self.__offsetY = len(lines) - 1
       else:
         self.__offsetY = 0
-    self.clear()
+    self.clear_UI()
     for y in range(0, lines_len):
-      self.print(0, y, lines[y])
+      self.print_UI(0, y, lines[y])
 
-    self.assertConsistent()
+    self.assertConsistent_UI()
 
-  def clear(self):
+  def clear_UI(self):
+    assertOnUIThread()
     if self.__focused:
       attr = curses.A_REVERSE
     else:
@@ -775,11 +780,11 @@ class Window:
     self.__window.addch(self.__maxY, self.__minX, curses.ACS_LLCORNER, attr)
     self.__window.addch(self.__maxY, self.__maxX, curses.ACS_LRCORNER, attr)
 
-    self.__window.hline(self.__minY, self.__minX + 1, curses.ACS_HLINE, self.availableX(), attr)
-    self.__window.hline(self.__maxY, self.__minX + 1, curses.ACS_HLINE, self.availableX(), attr)
+    self.__window.hline(self.__minY, self.__minX + 1, curses.ACS_HLINE, self.availableX_UI(), attr)
+    self.__window.hline(self.__maxY, self.__minX + 1, curses.ACS_HLINE, self.availableX_UI(), attr)
 
-    self.__window.vline(self.__minY + 1, self.__minX, curses.ACS_VLINE, self.availableY(), attr)
-    self.__window.vline(self.__minY + 1, self.__maxX, curses.ACS_VLINE, self.availableY(), attr)
+    self.__window.vline(self.__minY + 1, self.__minX, curses.ACS_VLINE, self.availableY_UI(), attr)
+    self.__window.vline(self.__minY + 1, self.__maxX, curses.ACS_VLINE, self.availableY_UI(), attr)
 
     # This is faster than clear()
     for i in range(self.__minY + 1, self.__maxY):
@@ -787,8 +792,9 @@ class Window:
         self.__window.addch(i, j, ' ')
 
   # uses 0-based coordinates.
-  def print(self, x, y, message):
-    self.assertConsistent()
+  def print_UI(self, x, y, message):
+    assertOnUIThread()
+    self.assertConsistent_UI()
 
     if y == self.__currentY:
       attr = curses.A_REVERSE
@@ -798,24 +804,27 @@ class Window:
     x -= self.__offsetX
     y -= self.__offsetY
 
-    if y < 0 or y > self.availableY() - 1:
+    if y < 0 or y > self.availableY_UI() - 1:
       return
-    if x + len(message) < -1 or x > self.availableX() - 1:
+    if x + len(message) < -1 or x > self.availableX_UI() - 1:
       return
     if x < 0:
       message = message[-x:]
       x = 0
-    if x + len(message) > self.availableX():
-      message = message[:self.availableX() - x]
+    if x + len(message) > self.availableX_UI():
+      message = message[:self.availableX_UI() - x]
     self.__window.addstr(y + self.__minY + 1, x + self.__minX + 1, message, attr)
 
-  def availableX(self):
+  def availableX_UI(self):
+    assertOnUIThread()
     return self.__maxX - self.__minX - 1
 
-  def availableY(self):
+  def availableY_UI(self):
+    assertOnUIThread()
     return self.__maxY - self.__minY - 1
 
-  def addLineChangeListener(self, listener):
+  def addLineChangeListener_UI(self, listener):
+    assertOnUIThread()
     self.__line_change_listeners.append(listener)
 
   def __callLineChangeListeners(self):
@@ -823,22 +832,25 @@ class Window:
       listener(self.__currentY)
 
 class TreeWindow(Window):
-  def __init__(self, stdscr, node_tree):
+  def __init__(self, stdscr, node_tree, ui_messages):
     super(TreeWindow, self).__init__(stdscr)
     self.__node_tree = node_tree
     self.__line_number_to_id = {}
     self.__node_change_listeners = []
-    self.addLineChangeListener(self.__onLineChange)
+    ui_messages.add(
+      self.addLineChangeListener_UI,
+      self.__onLineChange)
 
-  def draw(self, xMin, yMin, xMax, yMax):
-    self.setCoords(xMin, yMin, xMax, yMax)
+  def draw_UI(self, xMin, yMin, xMax, yMax):
+    assertOnUIThread()
+    self.setCoords_UI(xMin, yMin, xMax, yMax)
     nodes_with_ids = []
     self.__treeLines(['  '], self.__node_tree, nodes_with_ids)
     self.__line_number_to_id = {}
     for line_number in range(0, len(nodes_with_ids)):
       self.__line_number_to_id[line_number] = nodes_with_ids[line_number][0]
     lines = [line for (_, line) in nodes_with_ids]
-    self.setDrawLines(lines)
+    self.setDrawLines_UI(lines)
 
   def addNodeChangeListener(self, listener):
     self.__node_change_listeners.append(listener)
@@ -877,11 +889,12 @@ class KonfigWindow(Window):
     self.__message_thread = message_thread
     self.__handler = handler
 
-  def draw(self, xMin, yMin, xMax, yMax):
-    self.setCoords(xMin, yMin, xMax, yMax)
+  def draw_UI(self, xMin, yMin, xMax, yMax):
+    assertOnUIThread()
+    self.setCoords_UI(xMin, yMin, xMax, yMax)
     lines = []
     self.__printKonfig(self.__node_tree.findNode(self.__node_id), lines)
-    self.setDrawLines(lines)
+    self.setDrawLines_UI(lines)
 
   def setNode(self, node_id):
     self.__node_id = node_id
@@ -895,35 +908,41 @@ class KonfigWindow(Window):
     output += node.getKonfig()
 
 class WindowEvents:
-  def __init__(self, window, display):
+  def __init__(self, window, display, ui_message_thread):
     self.__window = window
     self.__display = display
+    self.__ui_message_thread = ui_message_thread
 
-  def up(self):
-    self.__window.up()
+  def up_UI(self):
+    assertOnUIThread()
+    self.__window.up_UI()
     self.__display.update()
 
-  def down(self):
-    self.__window.down()
+  def down_UI(self):
+    assertOnUIThread()
+    self.__window.down_UI()
     self.__display.update()
 
-  def setFocused(self, focused):
-    self.__window.setFocused(focused)
+  def setFocused_UI(self, focused):
+    assertOnUIThread()
+    self.__window.setFocused_UI(focused)
 
 class Display:
   TREE_MIN_COLS = 20
   WINDOW_MIN_COLS = 20
-  def __init__(self, stdscr, node_tree, message_thread, handler):
+  def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler):
     self.__stdscr = stdscr
     curses.curs_set(False)
-    self.__tree_window = TreeWindow(stdscr, node_tree)
-    self.__tree_window_events = WindowEvents(self.__tree_window, self)
+    self.__tree_window = TreeWindow(stdscr, node_tree, ui_message_thread)
+    self.__tree_window_events = WindowEvents(self.__tree_window, self, ui_message_thread)
     self.__konfig_window = KonfigWindow(stdscr, node_tree, message_thread, handler)
-    self.__konfig_window_events = WindowEvents(self.__konfig_window, self)
+    self.__konfig_window_events = WindowEvents(self.__konfig_window, self, ui_message_thread)
     self.__current_window_index = 0
     self.__all_window_events = [self.__tree_window_events, self.__konfig_window_events]
+    self.__ui_message_thread = ui_message_thread
 
-  def currentWindow(self):
+  def currentWindow_UI(self):
+    assertOnUIThread()
     return self.__all_window_events[self.__current_window_index]
 
   def getTreeNodeWindow(self):
@@ -933,27 +952,34 @@ class Display:
     return self.__konfig_window
 
   def update(self):
+    self.__ui_message_thread.add(self.__update_UI)
+
+  def __update_UI(self):
+    assertOnUIThread()
+
     for w in self.__all_window_events:
-      w.setFocused(False)
-    self.currentWindow().setFocused(True)
+      w.setFocused_UI(False)
+    self.currentWindow_UI().setFocused_UI(True)
 
     assert curses.COLS > Display.TREE_MIN_COLS + Display.WINDOW_MIN_COLS
-    self.__tree_window.draw(0, 0, Display.TREE_MIN_COLS, curses.LINES - 2)
-    self.__konfig_window.draw(Display.TREE_MIN_COLS + 1, 0, curses.COLS - 1, curses.LINES - 2)
+    self.__tree_window.draw_UI(0, 0, Display.TREE_MIN_COLS, curses.LINES - 2)
+    self.__konfig_window.draw_UI(Display.TREE_MIN_COLS + 1, 0, curses.COLS - 1, curses.LINES - 2)
     self.__stdscr.addstr(curses.LINES - 1, 0, "F10-Quit")
     self.__stdscr.refresh()
 
-  def tab(self):
+  def tab_UI(self):
+    assertOnUIThread()
     self.__current_window_index += 1
     if self.__current_window_index >= len(self.__all_window_events):
       self.__current_window_index = 0
-    self.update()
+    self.__update_UI()
 
-  def backTab(self):
+  def backTab_UI(self):
+    assertOnUIThread()
     self.__current_window_index -= 1
     if self.__current_window_index >= len(self.__all_window_events):
       self.__current_window_index = 0
-    self.update()
+    self.__update_UI()
 
 #-------------------------------------
 #           Process watcher
@@ -1001,6 +1027,7 @@ class MessageThread:
   def getThread(self):
     return self.__thread
 
+  # TODO: This should be rewritten for the UI thread
   def die(self):
     # Assumes this is called from life.die()
     self.__block.set()
@@ -1070,22 +1097,23 @@ def startKeyboardThread(message_thread, life, connector, window):
 #-------------------------------------
 
 class ConnectEverything:
-  def __init__(self, life, windows):
+  def __init__(self, life, windows, ui_message_thread):
     self.__life = life
     self.__windows = windows
+    self.__ui_message_thread = ui_message_thread
     windows.getTreeNodeWindow().addNodeChangeListener(self.__onNodeChange)
 
   def keyEvent(self, c):
     if c == curses.KEY_F10:
       self.__life.die()
     elif c == curses.KEY_UP:
-      self.__windows.currentWindow().up()
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().up_UI())
     elif c == curses.KEY_DOWN:
-      self.__windows.currentWindow().down()
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().down_UI())
     elif c == curses.ascii.TAB:
-      self.__windows.tab()
+      self.__ui_message_thread.add(self.__windows.tab_UI)
     elif c == curses.KEY_BTAB:
-      self.__windows.backTab()
+      self.__ui_message_thread.add(self.__windows.backTab_UI)
 
   def __onNodeChange(self, node_id):
     self.__windows.getKonfigWindow().setNode(node_id)
@@ -1117,12 +1145,12 @@ def main(argv, stdscr):
   end_state = EndState()
   handler = Handler(p.stdin, log, message_thread, live, end_state)
 
-  d = Display(stdscr, handler.nodeTree(), message_thread, handler)
+  d = Display(stdscr, handler.nodeTree(), ui_message_thread, message_thread, handler)
   d.update()
 
   handler.nodeTree().addChangeListener(TreeChangeListener(d))
 
-  connector = ConnectEverything(live, d)
+  connector = ConnectEverything(live, d, ui_message_thread)
   startKeyboardThread(message_thread, live, connector, stdscr)
 
   try:
