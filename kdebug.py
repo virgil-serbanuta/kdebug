@@ -114,9 +114,9 @@ class Node:
 
   def getKonfig(self):
     if self.hasKonfig():
-      return [str(self)] + self.__konfig
+      return self.__konfig
     else:
-      return ['Not loaded yet: %s.' % str(self)]
+      return ['Not loaded yet.']
 
   def hasKonfig(self):
     return bool(self.__konfig)
@@ -697,6 +697,7 @@ class Window:
     self.__lines = []
     self.__line_change_listeners = []
     self.__focused = False
+    self.__title = 'Title'
 
   def setCoords_UI(self, minX, minY, maxX, maxY):
     assertOnUIThread()
@@ -751,6 +752,10 @@ class Window:
     self.assertConsistent_UI()
     self.__callLineChangeListeners()
 
+  def setTitle_UI(self, title):
+    assertOnUIThread()
+    self.__title = title
+
   def setDrawLines_UI(self, lines):
     assertOnUIThread()
     self.assertConsistent_UI()
@@ -775,12 +780,26 @@ class Window:
       attr = curses.A_REVERSE
     else:
       attr = curses.A_NORMAL
+
+    title = self.__title
+    if len(title) > self.availableX_UI():
+      assert self.availableX_UI() >= 3
+      title = '%s...' % title[:self.availableX_UI() - 3]
+    
     self.__window.addch(self.__minY, self.__minX, curses.ACS_ULCORNER, attr)
     self.__window.addch(self.__minY, self.__maxX, curses.ACS_URCORNER, attr)
     self.__window.addch(self.__maxY, self.__minX, curses.ACS_LLCORNER, attr)
     self.__window.addch(self.__maxY, self.__maxX, curses.ACS_LRCORNER, attr)
 
-    self.__window.hline(self.__minY, self.__minX + 1, curses.ACS_HLINE, self.availableX_UI(), attr)
+    assert len(title) <= self.availableX_UI()
+    before_title_start = self.__minX + 1
+    before_title = int((self.availableX_UI() - len(title)) / 2)
+    title_start = before_title_start + before_title
+    after_title_start = title_start + len(title)
+    after_title = self.availableX_UI() - (after_title_start - before_title_start)
+    self.__window.addstr(self.__minY, title_start, title, attr)
+    self.__window.hline(self.__minY, before_title_start, curses.ACS_HLINE, before_title, attr)
+    self.__window.hline(self.__minY, after_title_start, curses.ACS_HLINE, after_title, attr)
     self.__window.hline(self.__maxY, self.__minX + 1, curses.ACS_HLINE, self.availableX_UI(), attr)
 
     self.__window.vline(self.__minY + 1, self.__minX, curses.ACS_VLINE, self.availableY_UI(), attr)
@@ -840,6 +859,7 @@ class TreeWindow(Window):
     ui_messages.add(
       self.addLineChangeListener_UI,
       self.__onLineChange)
+    ui_messages.add(self.setTitle_UI, 'Tree')
 
   def draw_UI(self, xMin, yMin, xMax, yMax):
     assertOnUIThread()
@@ -882,12 +902,14 @@ class TreeWindow(Window):
       listener(node_id)
 
 class KonfigWindow(Window):
-  def __init__(self, stdscr, node_tree, message_thread, handler):
+  def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler):
     super(KonfigWindow, self).__init__(stdscr)
     self.__node_tree = node_tree
     self.__node_id = node_tree.getId()
     self.__message_thread = message_thread
     self.__handler = handler
+    self.__ui_message_thread = ui_message_thread
+    self.__ui_message_thread.add(self.setTitle_UI, str(self.__node_tree.findNode(self.__node_id)))
 
   def draw_UI(self, xMin, yMin, xMax, yMax):
     assertOnUIThread()
@@ -903,6 +925,7 @@ class KonfigWindow(Window):
           self.__handler.requestKonfig,
           node_id
       )
+    self.__ui_message_thread.add(self.setTitle_UI, str(self.__node_tree.findNode(self.__node_id)))
 
   def __printKonfig(self, node, output):
     output += node.getKonfig()
@@ -935,7 +958,7 @@ class Display:
     curses.curs_set(False)
     self.__tree_window = TreeWindow(stdscr, node_tree, ui_message_thread)
     self.__tree_window_events = WindowEvents(self.__tree_window, self, ui_message_thread)
-    self.__konfig_window = KonfigWindow(stdscr, node_tree, message_thread, handler)
+    self.__konfig_window = KonfigWindow(stdscr, node_tree, ui_message_thread, message_thread, handler)
     self.__konfig_window_events = WindowEvents(self.__konfig_window, self, ui_message_thread)
     self.__current_window_index = 0
     self.__all_window_events = [self.__tree_window_events, self.__konfig_window_events]
