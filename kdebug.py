@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import curses
+import curses.ascii
 import subprocess
 import sys
 import threading
@@ -8,6 +9,10 @@ import time
 import traceback
 
 debug = []
+UI_THREAD = None
+
+def assertOnUIThread():
+  assert threading.current_thread().indent == UI_THREAD.indent
 
 class StringFinder:
   def __init__(self, bytes_to_id):
@@ -280,9 +285,9 @@ class Handler:
       self.__state = Handler.PROMPT_IDLE
 
     self.__last_config_number = config_number
-    if last_command.startswith('step'):
+    if self.__next_node_state != Node.NORMAL:
       self.__node_tree.setNodeState(config_number, self.__next_node_state)
-    self.__next_node_state = Node.NORMAL
+      self.__next_node_state = Node.NORMAL
 
   def onBranches(self, steps, branches):
     self.__node_tree.addChildren(self.__last_config_number, branches)
@@ -311,8 +316,16 @@ class Handler:
     except BrokenPipeError:
       pass
 
+  def requestKonfig(self, node_id):
+    self.__unknown_konfigs.append(node_id)
+    self.__restartIfWaitingAtPrompt()
+
   def nodeTree(self):
     return self.__node_tree
+
+  def __restartIfWaitingAtPrompt(self):
+    if self.__state == Handler.PROMPT_IDLE:
+      self.onAtPrompt(self.__last_config_number)
 
   def __parsersPrepareForStep(self):
     for p in self.__parsers:
@@ -685,6 +698,7 @@ class Window:
     self.__window = window
     self.__lines = []
     self.__line_change_listeners = []
+    self.__focused = False
 
   def setCoords(self, minX, minY, maxX, maxY):
     self.__minX = minX
@@ -697,6 +711,9 @@ class Window:
       self.__currentY = available + self.__offsetY - 1
 
     self.assertConsistent()
+
+  def setFocused(self, focused):
+    self.__focused = focused
 
   def assertConsistent(self):
     assert self.__minX >= 0
@@ -726,7 +743,7 @@ class Window:
     if self.__currentY == len(self.__lines) - 1 or (not self.__lines):
       return
     self.__currentY += 1
-    if self.__currentY == self.__offsetY + self.__maxY:
+    if self.__currentY == self.__offsetY + self.availableY():
       self.__offsetY += 1
     self.assertConsistent()
     self.__callLineChangeListeners()
@@ -749,16 +766,20 @@ class Window:
     self.assertConsistent()
 
   def clear(self):
-    self.__window.addch(self.__minY, self.__minX, curses.ACS_ULCORNER)
-    self.__window.addch(self.__minY, self.__maxX, curses.ACS_URCORNER)
-    self.__window.addch(self.__maxY, self.__minX, curses.ACS_LLCORNER)
-    self.__window.addch(self.__maxY, self.__maxX, curses.ACS_LRCORNER)
+    if self.__focused:
+      attr = curses.A_REVERSE
+    else:
+      attr = curses.A_NORMAL
+    self.__window.addch(self.__minY, self.__minX, curses.ACS_ULCORNER, attr)
+    self.__window.addch(self.__minY, self.__maxX, curses.ACS_URCORNER, attr)
+    self.__window.addch(self.__maxY, self.__minX, curses.ACS_LLCORNER, attr)
+    self.__window.addch(self.__maxY, self.__maxX, curses.ACS_LRCORNER, attr)
 
-    self.__window.hline(self.__minY, self.__minX + 1, curses.ACS_HLINE, self.availableX())
-    self.__window.hline(self.__maxY, self.__minX + 1, curses.ACS_HLINE, self.availableX())
+    self.__window.hline(self.__minY, self.__minX + 1, curses.ACS_HLINE, self.availableX(), attr)
+    self.__window.hline(self.__maxY, self.__minX + 1, curses.ACS_HLINE, self.availableX(), attr)
 
-    self.__window.vline(self.__minY + 1, self.__minX, curses.ACS_VLINE, self.availableY())
-    self.__window.vline(self.__minY + 1, self.__maxX, curses.ACS_VLINE, self.availableY())
+    self.__window.vline(self.__minY + 1, self.__minX, curses.ACS_VLINE, self.availableY(), attr)
+    self.__window.vline(self.__minY + 1, self.__maxX, curses.ACS_VLINE, self.availableY(), attr)
 
     # This is faster than clear()
     for i in range(self.__minY + 1, self.__maxY):
@@ -849,10 +870,12 @@ class TreeWindow(Window):
       listener(node_id)
 
 class KonfigWindow(Window):
-  def __init__(self, stdscr, node_tree):
+  def __init__(self, stdscr, node_tree, message_thread, handler):
     super(KonfigWindow, self).__init__(stdscr)
     self.__node_tree = node_tree
     self.__node_id = node_tree.getId()
+    self.__message_thread = message_thread
+    self.__handler = handler
 
   def draw(self, xMin, yMin, xMax, yMax):
     self.setCoords(xMin, yMin, xMax, yMax)
@@ -862,6 +885,11 @@ class KonfigWindow(Window):
 
   def setNode(self, node_id):
     self.__node_id = node_id
+    if not self.__node_tree.findNode(self.__node_id).hasKonfig():
+      self.__message_thread.add(
+          self.__handler.requestKonfig,
+          node_id
+      )
 
   def __printKonfig(self, node, output):
     output += node.getKonfig()
@@ -879,18 +907,24 @@ class WindowEvents:
     self.__window.down()
     self.__display.update()
 
+  def setFocused(self, focused):
+    self.__window.setFocused(focused)
+
 class Display:
   TREE_MIN_COLS = 20
   WINDOW_MIN_COLS = 20
-  def __init__(self, stdscr, node_tree):
+  def __init__(self, stdscr, node_tree, message_thread, handler):
     self.__stdscr = stdscr
     curses.curs_set(False)
     self.__tree_window = TreeWindow(stdscr, node_tree)
     self.__tree_window_events = WindowEvents(self.__tree_window, self)
-    self.__konfig_window = KonfigWindow(stdscr, node_tree)
+    self.__konfig_window = KonfigWindow(stdscr, node_tree, message_thread, handler)
+    self.__konfig_window_events = WindowEvents(self.__konfig_window, self)
+    self.__current_window_index = 0
+    self.__all_window_events = [self.__tree_window_events, self.__konfig_window_events]
 
   def currentWindow(self):
-    return self.__tree_window_events
+    return self.__all_window_events[self.__current_window_index]
 
   def getTreeNodeWindow(self):
     return self.__tree_window
@@ -899,11 +933,27 @@ class Display:
     return self.__konfig_window
 
   def update(self):
+    for w in self.__all_window_events:
+      w.setFocused(False)
+    self.currentWindow().setFocused(True)
+
     assert curses.COLS > Display.TREE_MIN_COLS + Display.WINDOW_MIN_COLS
     self.__tree_window.draw(0, 0, Display.TREE_MIN_COLS, curses.LINES - 2)
     self.__konfig_window.draw(Display.TREE_MIN_COLS + 1, 0, curses.COLS - 1, curses.LINES - 2)
     self.__stdscr.addstr(curses.LINES - 1, 0, "F10-Quit")
     self.__stdscr.refresh()
+
+  def tab(self):
+    self.__current_window_index += 1
+    if self.__current_window_index >= len(self.__all_window_events):
+      self.__current_window_index = 0
+    self.update()
+
+  def backTab(self):
+    self.__current_window_index -= 1
+    if self.__current_window_index >= len(self.__all_window_events):
+      self.__current_window_index = 0
+    self.update()
 
 #-------------------------------------
 #           Process watcher
@@ -937,7 +987,8 @@ class MessageThread:
 
     self.__block = threading.Event()
     self.__mutex = threading.Lock()
-    threading.Thread(target=self.__run, daemon=True).start()
+    self.__thread = threading.Thread(target=self.__run, daemon=True)
+    self.__thread.start()
 
   def add(self, message, *args, **kwrds):
     self.__mutex.acquire()
@@ -946,6 +997,9 @@ class MessageThread:
       self.__block.set()
     finally:
       self.__mutex.release()
+
+  def getThread(self):
+    return self.__thread
 
   def die(self):
     # Assumes this is called from life.die()
@@ -1028,6 +1082,10 @@ class ConnectEverything:
       self.__windows.currentWindow().up()
     elif c == curses.KEY_DOWN:
       self.__windows.currentWindow().down()
+    elif c == curses.ascii.TAB:
+      self.__windows.tab()
+    elif c == curses.KEY_BTAB:
+      self.__windows.backTab()
 
   def __onNodeChange(self, node_id):
     self.__windows.getKonfigWindow().setNode(node_id)
@@ -1043,6 +1101,9 @@ def main(argv, stdscr):
   message_thread = MessageThread(live)
   live.setMessageThread(message_thread)
 
+  ui_message_thread = MessageThread(live)
+  global UI_THREAD
+  UI_THREAD = ui_message_thread.getThread()
 
   p = subprocess.Popen(
       argv,
@@ -1056,7 +1117,7 @@ def main(argv, stdscr):
   end_state = EndState()
   handler = Handler(p.stdin, log, message_thread, live, end_state)
 
-  d = Display(stdscr, handler.nodeTree())
+  d = Display(stdscr, handler.nodeTree(), message_thread, handler)
   d.update()
 
   handler.nodeTree().addChangeListener(TreeChangeListener(d))
