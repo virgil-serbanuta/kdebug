@@ -159,6 +159,7 @@ class NodeTree:
     else:
       assert parent == self.__nodes[-1].number()
       self.__nodes.append(Node(child))
+      self.__notifyChangeListeners()
 
   def addChildren(self, parent, children):
     assert parent in self.__all_nodes
@@ -190,11 +191,17 @@ class NodeTree:
   def children(self):
     return self.__children
 
+  def nodes(self):
+    return self.__nodes
+
   def addChangeListener(self, listener):
     self.__changeListeners.append(listener)
 
   def findNode(self, node_id):
     return self.__findNode(node_id)
+
+  def findTree(self, node_id):
+    return self.__findTree(node_id)
 
   def __notifyChangeListeners(self):
     for l in self.__changeListeners:
@@ -208,6 +215,15 @@ class NodeTree:
     for n in self.__nodes:
       if n.number() == number:
         return n
+    assert False
+
+  def __findTree(self, number):
+    assert number in self.__all_nodes, '%d %s' % (number, self.__all_nodes)
+    if number == self.getId():
+      return self
+    for c in self.__children:
+      if number in c.__all_nodes:
+        return c.__findTree(number)
     assert False
 
   def __containsNode(self, number):
@@ -249,13 +265,11 @@ class Handler:
     self.__node_tree = NodeTree(0, message_thread)
     self.__last_config_number = -1
     self.__next_node_state = Node.NORMAL
-    self.__last_command = b'step'
     self.__life = life
     self.__end_state = end_state
 
   def onAtPrompt(self, config_number):
     self.__log.write(b'onAtPrompt\n')
-    last_command = self.__last_command.decode('ascii')
 
     if self.__state == Handler.STARTING:
       assert config_number == 0
@@ -277,7 +291,6 @@ class Handler:
       self.__unknown_konfigs.append(0)
 
     if self.__pending_commands:
-      # self.__parsersPrepareForStep()
       self.__pending_commands[0]()
       self.__pending_commands = self.__pending_commands[1:]
     else:
@@ -901,6 +914,47 @@ class TreeWindow(Window):
     for listener in self.__node_change_listeners:
       listener(node_id)
 
+class SubTreeWindow(Window):
+  def __init__(self, stdscr, node_tree, ui_message_thread):
+    super(SubTreeWindow, self).__init__(stdscr)
+    self.__node_tree = node_tree
+    self.__current_node_tree = node_tree
+    self.__line_number_to_id = {}
+    self.__node_change_listeners = []
+    ui_message_thread.add(
+      self.addLineChangeListener_UI,
+      self.__onLineChange)
+    ui_message_thread.add(self.setTitle_UI, 'Subnodes')
+    self.__ui_message_thread = ui_message_thread
+
+  def draw_UI(self, xMin, yMin, xMax, yMax):
+    assertOnUIThread()
+    self.setCoords_UI(xMin, yMin, xMax, yMax)
+    nodes_with_ids = []
+    self.__treeLines(self.__current_node_tree, nodes_with_ids)
+    self.__line_number_to_id = {}
+    for line_number in range(0, len(nodes_with_ids)):
+      self.__line_number_to_id[line_number] = nodes_with_ids[line_number][0]
+    lines = [line for (_, line) in nodes_with_ids]
+    self.setDrawLines_UI(lines)
+
+  def setNode(self, node_id):
+    self.__node_id = node_id
+    self.__current_node_tree = self.__node_tree.findTree(node_id)
+    self.__ui_message_thread.add(self.setTitle_UI, str(self.__node_tree.findNode(self.__node_id)))
+
+  def addNodeChangeListener(self, listener):
+    self.__node_change_listeners.append(listener)
+
+  def __treeLines(self, tree, output):
+    for node in tree.nodes():
+      output.append((node.number(), str(node)))
+
+  def __onLineChange(self, new_line):
+    node_id = self.__line_number_to_id[new_line]
+    for listener in self.__node_change_listeners:
+      listener(node_id)
+
 class KonfigWindow(Window):
   def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler):
     super(KonfigWindow, self).__init__(stdscr)
@@ -952,16 +1006,23 @@ class WindowEvents:
 
 class Display:
   TREE_MIN_COLS = 20
+  SUBTREE_MIN_COLS = 20
   WINDOW_MIN_COLS = 20
   def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler):
     self.__stdscr = stdscr
     curses.curs_set(False)
     self.__tree_window = TreeWindow(stdscr, node_tree, ui_message_thread)
     self.__tree_window_events = WindowEvents(self.__tree_window, self, ui_message_thread)
+    self.__subtree_window = SubTreeWindow(stdscr, node_tree, ui_message_thread)
+    self.__subtree_window_events = WindowEvents(self.__subtree_window, self, ui_message_thread)
     self.__konfig_window = KonfigWindow(stdscr, node_tree, ui_message_thread, message_thread, handler)
     self.__konfig_window_events = WindowEvents(self.__konfig_window, self, ui_message_thread)
     self.__current_window_index = 0
-    self.__all_window_events = [self.__tree_window_events, self.__konfig_window_events]
+    self.__all_window_events = [
+        self.__tree_window_events,
+        self.__subtree_window_events,
+        self.__konfig_window_events
+      ]
     self.__ui_message_thread = ui_message_thread
 
   def currentWindow_UI(self):
@@ -970,6 +1031,9 @@ class Display:
 
   def getTreeNodeWindow(self):
     return self.__tree_window
+
+  def getSubtreeNodeWindow(self):
+    return self.__subtree_window
 
   def getKonfigWindow(self):
     return self.__konfig_window
@@ -985,8 +1049,15 @@ class Display:
     self.currentWindow_UI().setFocused_UI(True)
 
     assert curses.COLS > Display.TREE_MIN_COLS + Display.WINDOW_MIN_COLS
-    self.__tree_window.draw_UI(0, 0, Display.TREE_MIN_COLS, curses.LINES - 2)
-    self.__konfig_window.draw_UI(Display.TREE_MIN_COLS + 1, 0, curses.COLS - 1, curses.LINES - 2)
+    start_cols = 0
+    end_cols = start_cols + Display.TREE_MIN_COLS
+    self.__tree_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
+    start_cols = end_cols + 1
+    end_cols = start_cols + Display.SUBTREE_MIN_COLS
+    self.__subtree_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
+    start_cols = end_cols + 1
+    end_cols = curses.COLS - 1
+    self.__konfig_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
     self.__stdscr.addstr(curses.LINES - 1, 0, "F10-Quit")
     self.__stdscr.refresh()
 
@@ -1124,7 +1195,8 @@ class ConnectEverything:
     self.__life = life
     self.__windows = windows
     self.__ui_message_thread = ui_message_thread
-    windows.getTreeNodeWindow().addNodeChangeListener(self.__onNodeChange)
+    windows.getTreeNodeWindow().addNodeChangeListener(self.__onTreeNodeChange)
+    windows.getSubtreeNodeWindow().addNodeChangeListener(self.__onSubtreeNodeChange)
 
   def keyEvent(self, c):
     if c == curses.KEY_F10:
@@ -1138,7 +1210,12 @@ class ConnectEverything:
     elif c == curses.KEY_BTAB:
       self.__ui_message_thread.add(self.__windows.backTab_UI)
 
-  def __onNodeChange(self, node_id):
+  def __onTreeNodeChange(self, node_id):
+    self.__windows.getSubtreeNodeWindow().setNode(node_id)
+    self.__windows.getKonfigWindow().setNode(node_id)
+    self.__windows.update()
+
+  def __onSubtreeNodeChange(self, node_id):
     self.__windows.getKonfigWindow().setNode(node_id)
     self.__windows.update()
 
