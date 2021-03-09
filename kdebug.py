@@ -8,6 +8,8 @@ import threading
 import time
 import traceback
 
+import konfig
+
 debug = []
 UI_THREAD = None
 
@@ -575,11 +577,12 @@ class OutputParser:
     if self.__processPromptState(found):
       if self.__substate == OutputParser.STATE_START:
         assert self.__konfig_lines
-        self.__log.write(bytes('onKonfig(%d, [%s, ...])' % (self.__konfig_number, self.__konfig_lines[0]), 'ascii'))
+        normalized = konfig.normalize(self.__konfig_lines)
+        self.__log.write(bytes('onKonfig(%d, [%s, ...])' % (self.__konfig_number, normalized), 'ascii'))
         self.__message_thread.add(
             self.__handler.onKonfig,
             self.__konfig_number,
-            self.__konfig_lines
+            normalized
         )
       return
     if self.__processNumber(byte, self.__konfig_string_finder):
@@ -754,6 +757,24 @@ class Window:
     self.assertConsistent_UI()
     self.__callLineChangeListeners()
 
+  def previousPage_UI(self):
+    assertOnUIThread()
+    self.assertConsistent_UI()
+    if self.__currentY == 0:
+      return
+    try:
+      if self.__currentY > self.__offsetY:
+        self.__currentY = self.__offsetY
+        return
+      assert self.availableY_UI() > 2
+      self.__currentY -= self.availableY_UI() - 2
+      if self.__currentY < 0:
+        self.__currentY = 0
+      self.__offsetY = self.__currentY
+    finally:
+      self.assertConsistent_UI()
+      self.__callLineChangeListeners()
+
   def down_UI(self):
     assertOnUIThread()
     self.assertConsistent_UI()
@@ -765,6 +786,30 @@ class Window:
     self.assertConsistent_UI()
     self.__callLineChangeListeners()
 
+  def nextPage_UI(self):
+    assertOnUIThread()
+    self.assertConsistent_UI()
+    max_line = len(self.__lines) - 1
+    if self.__currentY == max_line or (not self.__lines):
+      return
+    try:
+      lines_but_one = self.availableY_UI() - 1
+      assert lines_but_one > 1
+      last_line = self.__offsetY + lines_but_one
+      if self.__currentY < last_line:
+        self.__currentY = last_line
+        if self.__currentY > max_line:
+          self.__currentY = max_line
+        return
+      self.__currentY += lines_but_one - 1
+      if self.__currentY > max_line:
+        self.__currentY = max_line
+      if self.__currentY - lines_but_one > self.__offsetY:
+        self.__offsetY = self.__currentY - lines_but_one
+    finally:
+      self.assertConsistent_UI()
+      self.__callLineChangeListeners()
+
   def setTitle_UI(self, title):
     assertOnUIThread()
     self.__title = title
@@ -772,6 +817,8 @@ class Window:
   def setDrawLines_UI(self, lines):
     assertOnUIThread()
     self.assertConsistent_UI()
+
+    availableY = self.availableY_UI()
 
     self.__lines = lines
 
@@ -781,6 +828,10 @@ class Window:
         self.__offsetY = len(lines) - 1
       else:
         self.__offsetY = 0
+    if self.__currentY >= len(lines):
+      self.__currentY = len(lines) - 1
+      if self.__currentY < 0:
+        self.__currentY = 0
     self.clear_UI()
     for y in range(0, lines_len):
       self.print_UI(0, y, lines[y])
@@ -995,9 +1046,19 @@ class WindowEvents:
     self.__window.up_UI()
     self.__display.update()
 
+  def previousPage_UI(self):
+    assertOnUIThread()
+    self.__window.previousPage_UI()
+    self.__display.update()
+
   def down_UI(self):
     assertOnUIThread()
     self.__window.down_UI()
+    self.__display.update()
+
+  def nextPage_UI(self):
+    assertOnUIThread()
+    self.__window.nextPage_UI()
     self.__display.update()
 
   def setFocused_UI(self, focused):
@@ -1167,6 +1228,7 @@ class KeyboardReader:
   
   def run(self):
     try:
+      time.sleep(0.5)
       while self.__life.isRunning():
         c = self.__window.getch()
         if c == -1:
@@ -1205,6 +1267,10 @@ class ConnectEverything:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().up_UI())
     elif c == curses.KEY_DOWN:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().down_UI())
+    elif c == curses.KEY_PPAGE:
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().previousPage_UI())
+    elif c == curses.KEY_NPAGE:
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().nextPage_UI())
     elif c == curses.ascii.TAB:
       self.__ui_message_thread.add(self.__windows.tab_UI)
     elif c == curses.KEY_BTAB:
