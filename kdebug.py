@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 
+import indent
 import konfig
 
 debug = []
@@ -818,8 +819,6 @@ class Window:
     assertOnUIThread()
     self.assertConsistent_UI()
 
-    availableY = self.availableY_UI()
-
     self.__lines = lines
 
     lines_len = len(lines)
@@ -1020,7 +1019,10 @@ class KonfigWindow(Window):
     assertOnUIThread()
     self.setCoords_UI(xMin, yMin, xMax, yMax)
     lines = []
-    self.__printKonfig(self.__node_tree.findNode(self.__node_id), lines)
+    self.__printKonfig(
+        self.__node_tree.findNode(self.__node_id),
+        self.availableX_UI(),
+        lines)
     self.setDrawLines_UI(lines)
 
   def setNode(self, node_id):
@@ -1032,8 +1034,10 @@ class KonfigWindow(Window):
       )
     self.__ui_message_thread.add(self.setTitle_UI, str(self.__node_tree.findNode(self.__node_id)))
 
-  def __printKonfig(self, node, output):
-    output += node.getKonfig()
+  def __printKonfig(self, node, max_line_length, output):
+    konfig = node.getKonfig()
+    indented = indent.split(konfig, max_line_length)
+    indent.unparse(0, indented, output)
 
 class WindowEvents:
   def __init__(self, window, display, ui_message_thread):
@@ -1241,6 +1245,7 @@ class KeyboardReader:
     finally:
       self.__life.die()
 
+# TODO: use a single thread for all UI stuff
 
 def startKeyboardThread(message_thread, life, connector, window):
   threading.Thread(

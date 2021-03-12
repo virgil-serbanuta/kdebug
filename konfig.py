@@ -2,19 +2,8 @@
 
 import sys
 
-INDENTS = ['  ' * indent for indent in range(0, 100)]
-
 def normalize(lines):
-  output = []
-  unparse(0, transform(parse(lines)), output)
-  return output
-
-def unparse(indent, lines, output):
-  for item in lines:
-    if type(item) == list:
-      unparse(indent + 1, item, output)
-    else:
-      output.append(INDENTS[indent] + item)
+  return transform(parse(lines))
 
 def transformTraversal(lines, visitor):
   retv = []
@@ -42,7 +31,7 @@ def transformAnd(lines):
       continue
     assert i < len(lines)
     assert type(lines[i]) == list
-    if i + 1 >= len(lines) or lines[i + 1] != '#And':
+    if i + 1 < len(lines) and lines[i + 1] != '#And':
       continue
     if len(lines[i]) != 1:
       continue
@@ -57,7 +46,8 @@ def transformJoin(lines):
   for l in lines:
     if not type(l) == str:
       return None
-  return [''.join(lines)]
+  lines = [l.strip() for l in lines]
+  return [' '.join(lines)]
 
 def transformEquals(lines):
   if len(lines) != 3:
@@ -128,7 +118,6 @@ def parseLevelled(lines):
     parsed.append(parseLevelled(children))
 
   return parsed
-
 
 def main(argv):
   print(normalize([
