@@ -1070,8 +1070,8 @@ class WindowEvents:
     self.__window.setFocused_UI(focused)
 
 class Display:
-  TREE_MIN_COLS = 20
-  SUBTREE_MIN_COLS = 20
+  TREE_MIN_COLS = 40
+  SUBTREE_MIN_COLS = 10
   WINDOW_MIN_COLS = 20
   def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler):
     self.__stdscr = stdscr
@@ -1106,6 +1106,11 @@ class Display:
   def update(self):
     self.__ui_message_thread.add(self.__update_UI)
 
+  def repaint_UI(self):
+    assertOnUIThread()
+    self.__stdscr.clear()
+    self.__update_UI()
+
   def __update_UI(self):
     assertOnUIThread()
 
@@ -1123,7 +1128,7 @@ class Display:
     start_cols = end_cols + 1
     end_cols = curses.COLS - 1
     self.__konfig_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
-    self.__stdscr.addstr(curses.LINES - 1, 0, "F10-Quit")
+    self.__stdscr.addstr(curses.LINES - 1, 0, "F10-Quit  F9-Repaint")
     self.__stdscr.refresh()
 
   def tab_UI(self):
@@ -1224,34 +1229,26 @@ class TreeChangeListener:
 #-------------------------------------
 
 class KeyboardReader:
-  def __init__(self, message_thread, life, connector, window):
+  def __init__(self, message_thread, ui_message_thread, life, connector, window):
     self.__message_thread = message_thread
+    self.__ui_message_thread = ui_message_thread
     self.__connector = connector
     self.__window = window
     self.__life = life
   
-  def run(self):
+  def maybeReadKey_UI(self):
     try:
-      time.sleep(0.5)
-      while self.__life.isRunning():
-        c = self.__window.getch()
-        if c == -1:
-          time.sleep(0.1)
-          continue
-        self.__message_thread.add(self.__connector.keyEvent, c)
+      c = self.__window.getch()
+      if c == -1:
+        time.sleep(0.1)
+        return
+      self.__message_thread.add(self.__connector.keyEvent, c)
     except Exception as e:
       debug.append(''.join(traceback.TracebackException.from_exception(e).format(chain=True)))
+      self.__life.die()
       raise
     finally:
-      self.__life.die()
-
-# TODO: use a single thread for all UI stuff
-
-def startKeyboardThread(message_thread, life, connector, window):
-  threading.Thread(
-      target=KeyboardReader(message_thread, life, connector, window).run,
-      daemon=True
-    ).start()
+      self.__ui_message_thread.add(self.maybeReadKey_UI)
 
 #-------------------------------------
 #       Connecting everything
@@ -1268,6 +1265,8 @@ class ConnectEverything:
   def keyEvent(self, c):
     if c == curses.KEY_F10:
       self.__life.die()
+    if c == curses.KEY_F9:
+      self.__ui_message_thread.add(self.__windows.repaint_UI)
     elif c == curses.KEY_UP:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().up_UI())
     elif c == curses.KEY_DOWN:
@@ -1322,7 +1321,10 @@ def main(argv, stdscr):
   handler.nodeTree().addChangeListener(TreeChangeListener(d))
 
   connector = ConnectEverything(live, d, ui_message_thread)
-  startKeyboardThread(message_thread, live, connector, stdscr)
+
+  keyboard_reader = KeyboardReader(
+      message_thread, ui_message_thread, live, connector, stdscr)
+  ui_message_thread.add(keyboard_reader.maybeReadKey_UI)
 
   try:
     communicate(p, log, end_state, handler, live, message_thread)

@@ -50,7 +50,7 @@ def transformJoin(lines):
   return [' '.join(lines)]
 
 def transformEquals(lines):
-  if len(lines) != 3:
+  if len(lines) < 3:
     return None
   if lines[1] != '#Equals':
     return None
@@ -64,7 +64,7 @@ def transformEquals(lines):
   second = second[0]
   assert type(first) == str
   assert type(second) == str
-  return ['%s :==: %s' % (first, second)]
+  return ['%s :==: %s' % (first, second)] + lines[3:]
 
 def transformBracketed(lines, visitor):
   if len(lines) < 2:
