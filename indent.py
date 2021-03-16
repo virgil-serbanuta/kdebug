@@ -16,13 +16,44 @@ def transformTraversal(level, lines, visitor):
     else:
       visited = visitor(level, item)
       if visited is not None:
-        retv.append(visited)
+        retv += visited
       else:
         retv.append(item)
 
   visited = visitor(level, retv)
   if visited is not None:
     return visited
+  return retv
+
+def splitOutsideParentheses(s, substr):
+  open_r = 0
+  open_s = 0
+  open_c = 0
+  start = 0
+  retv = []
+  end = s.find(substr, start)
+  pos = start
+  while end >= 0:
+    while pos < end:
+      if s[pos] == '(':
+        open_r += 1
+      elif s[pos] == '[':
+        open_s += 1
+      elif s[pos] == '{':
+        open_c += 1
+      elif s[pos] == ')':
+        open_r -= 1
+      elif s[pos] == ']':
+        open_s -= 1
+      elif s[pos] == '}':
+        open_c -= 1
+      pos += 1
+    next = end + len(substr)
+    if open_r == 0 and open_s == 0 and open_c == 0:
+      retv.append(s[start:end])
+      start = next
+    end = s.find(substr, next)
+  retv.append(s[start:])
   return retv
 
 def splitKCell(max_len, level, lines):
@@ -44,19 +75,19 @@ def splitKCell(max_len, level, lines):
     if type(line) != str:
       retv_line.append(line)
       continue
-    if len(line) + level * INDENT_SIZE <= max_len:
+    if len(line) + level * INDENT_SIZE < max_len:
       retv_line.append(line)
       continue
     if not ' ~> ' in line:
       retv_line.append(line)
       continue
-    split = line.split(' ~> ')
+    split = splitOutsideParentheses(line, ' ~> ')
     retv_line.append(split[0])
     retv_line += ['~> ' + s for s in split[1:]]
   retv.append(retv_line)
 
   retv += lines[i+2:]
-  return retv
+  return [retv]
 
 def findParenthesesPair(s, start):
   while start < len(s) and s[start] not in '([{':
@@ -97,7 +128,7 @@ def onlySpaces(start, end, str):
 def splitParentheses(max_len, level, item):
   if type(item) != str:
     return None
-  if len(item) + level * INDENT_SIZE <= max_len:
+  if len(item) + level * INDENT_SIZE < max_len:
     return None
   retv = []
   parens = findParenthesesPair(item, 0)
@@ -110,14 +141,14 @@ def splitParentheses(max_len, level, item):
     if onlySpaces(first + 1, last - 1, item):
       continue
 
-    if last - start + level * INDENT_SIZE <= max_len:
+    if last - start + level * INDENT_SIZE < max_len:
       if parens is None:
         retv.append(item[start:last + 1])
         retv.append(item[last + 1:])
         start = len(item)
         continue
       (nextFirst, _, _) = parens
-      if nextFirst - start + level * INDENT_SIZE > max_len:
+      if nextFirst - start + level * INDENT_SIZE >= max_len:
         retv.append(item[start:last + 1])
         start = last + 1
       continue
@@ -150,8 +181,12 @@ def splitParentheses(max_len, level, item):
 def strip(item):
   if type(item) != str:
     return None
-  return item.strip()
+  return [item.strip()]
 
+def removeEmptyLines(item):
+  if item:
+    return None
+  return []
 
 def split(lines, max_len):
   lines = transformTraversal(0, lines, lambda level, l: splitKCell(max_len, level, l))
@@ -162,6 +197,7 @@ def split(lines, max_len):
   lines = transformTraversal(0, lines, lambda _, l: strip(l))
   lines = transformTraversal(0, lines, lambda level, l: splitParentheses(max_len, level, l))
   lines = transformTraversal(0, lines, lambda _, l: strip(l))
+  lines = transformTraversal(0, lines, lambda _, l: removeEmptyLines(l))
   return lines
 
 def unparse(indent, lines, output):
@@ -174,7 +210,7 @@ def unparse(indent, lines, output):
 def main(argv):
   print(split([
     '<k>',
-    ['stuff1 ~> stuff2 ~> f(a) + stuff3(really, big(argument), list, with[all, sorts, of, stuff in, it, hope, it, will, be, split] + 10) ~> stuff4 ~> stuff5 ~> stuff6 ~> stuff7 ~> stuff8'],
+    ['stuff1 ~> stuff2 ~> f(a ~> .K) + stuff3(really, big(argument), list, with[all, sorts, of, stuff in, it, hope, it, will, be, split] + 10) ~> stuff4 ~> stuff5 ~> stuff6 ~> stuff7 ~> stuff8'],
     '</k>',
   ], 30))
 
