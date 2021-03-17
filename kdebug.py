@@ -309,6 +309,8 @@ class Handler:
     for c in branches:
       self.__nodes_seen.add(c)
     self.__unexpanded_nodes += branches
+    self.__unknown_konfigs.append(self.__last_config_number)
+    self.__unknown_konfigs += branches
 
   def onProofEnd(self, steps):
     if self.__end_state.isStuck():
@@ -351,12 +353,16 @@ class Handler:
       p.prepareForKonfig()
 
   def __getKonfigIfNeeded(self):
-    if self.__unknown_konfigs:
+    while self.__unknown_konfigs:
       node_id = self.__unknown_konfigs[0]
       self.__unknown_konfigs = self.__unknown_konfigs[1:]
+      if self.__node_tree.findNode(node_id).hasKonfig():
+        continue
 
       self.__pending_commands.append(lambda: self.__selectConfig(node_id))
       self.__pending_commands.append(self.__konfig)
+      return True
+    return False
 
   def __expandNodeIfNeeded(self):
     if self.__unexpanded_nodes:
@@ -365,6 +371,9 @@ class Handler:
 
       self.__pending_commands.append(lambda: self.__selectConfig(node_id))
       self.__pending_commands.append(self.__step)
+
+      return True
+    return False
 
   def __selectConfig(self, config_number):
     self.__parsersPrepareForStep()
@@ -1070,7 +1079,7 @@ class WindowEvents:
     self.__window.setFocused_UI(focused)
 
 class Display:
-  TREE_MIN_COLS = 40
+  TREE_MIN_COLS = 60
   SUBTREE_MIN_COLS = 10
   WINDOW_MIN_COLS = 20
   def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler):

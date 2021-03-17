@@ -47,7 +47,7 @@ def transformJoin(lines):
     if not type(l) == str:
       return None
   lines = [l.strip() for l in lines]
-  return [' '.join(lines)]
+  return ['\n'.join(lines)]
 
 def transformEquals(lines):
   if len(lines) < 3:

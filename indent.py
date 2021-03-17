@@ -89,6 +89,36 @@ def splitKCell(max_len, level, lines):
   retv += lines[i+2:]
   return [retv]
 
+def splitNewline(max_len, level, line):
+  if type(line) != str:
+    return None
+  if len(line) + level * INDENT_SIZE < max_len:
+    return None
+  if '\n' not in line:
+    return None
+  split = splitOutsideParentheses(line, '\n')
+  return split
+
+def splitOnStringWithPrefix(indent_following, splitter, prefix, max_len, level, line):
+  if type(line) != str:
+    return None
+  if len(line) + level * INDENT_SIZE < max_len:
+    return None
+  if splitter not in line:
+    return None
+  split = splitOutsideParentheses(line, splitter)
+  if indent_following:
+    return [split[0], [prefix + s for s in split[1:]]]
+  else:
+    return [split[0]] + [prefix + s for s in split[1:]]
+
+def replaceNewLine(line):
+  if type(line) != str:
+    return None
+  if '\n' not in line:
+    return None
+  return [line.replace('\n', ' ')]
+
 def findParenthesesPair(s, start):
   while start < len(s) and s[start] not in '([{':
     start += 1
@@ -191,12 +221,37 @@ def removeEmptyLines(item):
 def split(lines, max_len):
   lines = transformTraversal(0, lines, lambda level, l: splitKCell(max_len, level, l))
   lines = transformTraversal(0, lines, lambda _, l: strip(l))
-  lines = transformTraversal(0, lines, lambda level, l: splitParentheses(max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " ~> ", "~> ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitNewline(max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " :=: ", ":=: ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " +Int ", "+Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " >Int ", ">Int ", max_len, level, l))
   lines = transformTraversal(0, lines, lambda _, l: strip(l))
   lines = transformTraversal(0, lines, lambda level, l: splitParentheses(max_len, level, l))
   lines = transformTraversal(0, lines, lambda _, l: strip(l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " ~> ", "~> ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitNewline(max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " :=: ", ":=: ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " +Int ", "+Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " >Int ", ">Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda _, l: strip(l))
   lines = transformTraversal(0, lines, lambda level, l: splitParentheses(max_len, level, l))
   lines = transformTraversal(0, lines, lambda _, l: strip(l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " ~> ", "~> ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitNewline(max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " :=: ", ":=: ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " +Int ", "+Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " >Int ", ">Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda _, l: strip(l))
+  lines = transformTraversal(0, lines, lambda level, l: splitParentheses(max_len, level, l))
+  lines = transformTraversal(0, lines, lambda _, l: strip(l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " ~> ", "~> ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitNewline(max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(False, " :=: ", ":=: ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " +Int ", "+Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda level, l: splitOnStringWithPrefix(True, " >Int ", ">Int ", max_len, level, l))
+  lines = transformTraversal(0, lines, lambda _, l: strip(l))
+  lines = transformTraversal(0, lines, lambda _, l: replaceNewLine(l))
   lines = transformTraversal(0, lines, lambda _, l: removeEmptyLines(l))
   return lines
 
