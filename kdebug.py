@@ -6,10 +6,11 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 
 import indent
 import konfig
+import errors
+import messages
 
 debug = []
 UI_THREAD = None
@@ -103,7 +104,6 @@ class EndState:
 
   def isError(self):
     return self.__message == EndState.ERROR
-
 
 class Node:
   NORMAL = 0
@@ -463,17 +463,11 @@ class StdErrParser:
     self.__message_thread.add(self.__end_state.reset)
 
 def communicateWithStdErr(stderr, life, stdErrParser):
-  try:
-    while life.isRunning():
-      a = stderr.read(1)
-      if a == b'':
-        continue
-      stdErrParser.process(a)
-  except Exception as e:
-    debug.append(''.join(traceback.TracebackException.from_exception(e).format(chain=True)))
-    raise
-  finally:
-    life.die()
+  while life.isRunning():
+    a = stderr.read(1)
+    if a == b'':
+      continue
+    stdErrParser.process(a)
 
 #-------------------------------------
 #         StdOut thread
@@ -691,36 +685,28 @@ class OutputParser:
         assert not found
 
 def communicateWithStdOut(stdout, life, stdOutParser):
-  try:
-    while life.isRunning():
-      a = stdout.read(1)
-      if a == b'':
-        continue
-      stdOutParser.process(a)
-  except Exception as e:
-    debug.append(''.join(traceback.TracebackException.from_exception(e).format(chain=True)))
-    raise
-  finally:
-    life.die()
+  while life.isRunning():
+    a = stdout.read(1)
+    if a == b'':
+      continue
+    stdOutParser.process(a)
 
 #-------------------------------------
 #    Communication initialization
 #-------------------------------------
 
-def communicate(process, log, end_state, handler, life, message_thread):
+def communicate(process, log, end_state, handler, life, message_thread, error_handler):
   stdErrParser = StdErrParser(end_state, log, message_thread)
   stdOutParser = OutputParser(handler, log, message_thread)
 
   handler.setParsers([stdOutParser, stdErrParser])
 
-  threading.Thread(
+  error_handler.runGuardedThread(
       target=lambda : communicateWithStdErr(process.stderr, life, stdErrParser),
-      daemon=True
-    ).start()
-  threading.Thread(
+      daemon=True)
+  error_handler.runGuardedThread(
       target=lambda : communicateWithStdOut(process.stdout, life, stdOutParser),
-      daemon=True
-    ).start()
+      daemon=True)
 
 #-------------------------------------
 #           UI
@@ -1183,65 +1169,13 @@ class ProcessWatcher:
   def run(self):
     try:
       self.__process.wait()
-    except Exception as e:
-      debug.append(''.join(traceback.TracebackException.from_exception(e).format(chain=True)))
-      raise
     finally:
       self.__life.die()
 
-def runProcessWatcher(life, process):
-  threading.Thread(target=ProcessWatcher(life, process).run).start()
-
-#-------------------------------------
-#           COMMUNICATION
-#-------------------------------------
-
-class MessageThread:
-  def __init__(self, life):
-    self.__messages = []
-    self.__life = life
-
-    self.__block = threading.Event()
-    self.__mutex = threading.Lock()
-    self.__thread = threading.Thread(target=self.__run, daemon=True)
-    self.__thread.start()
-
-  def add(self, message, *args, **kwrds):
-    self.__mutex.acquire()
-    try:
-      self.__messages.append((message, args, kwrds))
-      self.__block.set()
-    finally:
-      self.__mutex.release()
-
-  def getThread(self):
-    return self.__thread
-
-  # TODO: This should be rewritten for the UI thread
-  def die(self):
-    # Assumes this is called from life.die()
-    self.__block.set()
-
-  def __run(self):
-    try:
-      while self.__life.isRunning():
-        self.__block.wait()
-        self.__block.clear()
-
-        self.__mutex.acquire()
-        try:
-          messages = self.__messages
-          self.__messages = []
-        finally:
-          self.__mutex.release()
-
-        for (first, firstArgs, firstKwrds) in messages:
-          first(*firstArgs, **firstKwrds)
-    except Exception as e:
-      debug.append(''.join(traceback.TracebackException.from_exception(e).format(chain=True)))
-      raise
-    finally:
-      self.__life.die()
+def runProcessWatcher(life, error_handler, process):
+  error_handler.runGuardedThread(
+      target=ProcessWatcher(life, process).run,
+      daemon=True)
 
 class TreeChangeListener:
   def __init__(self, display):
@@ -1264,15 +1198,12 @@ class KeyboardReader:
   
   def maybeReadKey_UI(self):
     try:
+      assertOnUIThread()
       c = self.__window.getch()
       if c == -1:
         time.sleep(0.1)
         return
       self.__message_thread.add(self.__connector.keyEvent, c)
-    except Exception as e:
-      debug.append(''.join(traceback.TracebackException.from_exception(e).format(chain=True)))
-      self.__life.die()
-      raise
     finally:
       self.__ui_message_thread.add(self.maybeReadKey_UI)
 
@@ -1315,17 +1246,15 @@ class ConnectEverything:
     self.__windows.getKonfigWindow().setNode(node_id)
     self.__windows.update()
 
-def main(argv, stdscr):
+def main(argv, live, error_handler, stdscr):
   stdscr.nodelay(True)
-
-  live = Life()  # Live is life.
 
   log = open('debug.log', 'wb')
 
-  message_thread = MessageThread(live)
+  message_thread = messages.MessageThread(live, error_handler)
   live.setMessageThread(message_thread)
 
-  ui_message_thread = MessageThread(live)
+  ui_message_thread = messages.MessageThread(live, error_handler)
   global UI_THREAD
   UI_THREAD = ui_message_thread.getThread()
 
@@ -1336,7 +1265,7 @@ def main(argv, stdscr):
       stdout=subprocess.PIPE,
       stderr=subprocess.PIPE)
 
-  runProcessWatcher(live, p)
+  runProcessWatcher(live, error_handler, p)
 
   end_state = EndState()
   handler = Handler(p.stdin, log, message_thread, live, end_state)
@@ -1353,18 +1282,24 @@ def main(argv, stdscr):
   ui_message_thread.add(keyboard_reader.maybeReadKey_UI)
 
   try:
-    communicate(p, log, end_state, handler, live, message_thread)
+    communicate(p, log, end_state, handler, live, message_thread, error_handler)
     while live.isRunning():
       try:
         p.wait(1)
       except subprocess.TimeoutExpired:
         pass
+      exit_code = p.poll()
+      if exit_code is not None and exit_code != 0:
+        debug.append('kore-repl exited with code %d.' % exit_code)
   finally:
     p.kill()
 
 if __name__ == "__main__":
   try:
-    curses.wrapper(lambda stdscr : main(sys.argv[1:], stdscr))
+    live = Life()  # Live is life.
+    error_handler = errors.ErrorHandler(live)
+    curses.wrapper(lambda stdscr : main(sys.argv[1:], live, error_handler, stdscr))
   finally:
     print('***********************************')
     print('\n'.join(debug))
+    print('\n'.join(error_handler.debugMessages()))
