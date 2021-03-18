@@ -78,6 +78,7 @@ class EndState:
   NOTHING = 1
   STUCK = 2
   FAILED_END = 3
+  ERROR = 4
 
   def __init__(self):
     self.__message = EndState.NOTHING
@@ -88,6 +89,9 @@ class EndState:
   def setFailedEnd(self):
     self.__message = EndState.FAILED_END
 
+  def setError(self):
+    self.__message = EndState.ERROR
+
   def reset(self):
     self.__message = EndState.NOTHING
 
@@ -97,12 +101,16 @@ class EndState:
   def isFailedEnd(self):
     return self.__message == EndState.FAILED_END
 
+  def isError(self):
+    return self.__message == EndState.ERROR
+
 
 class Node:
   NORMAL = 0
   PROOF_END = 1
   PROOF_END_FAILED = 2
   STUCK = 3
+  ERROR = 4
 
   def __init__(self, number):
     self.__number = number
@@ -134,6 +142,8 @@ class Node:
       return '(%d)' % self.__number
     if self.__state == Node.PROOF_END_FAILED:
       return 'failed_end(%d)' % self.__number
+    if self.__state == Node.ERROR:
+      return 'error(%d)' % self.__number
     if self.__state == Node.STUCK:
       return 'stuck(%d)' % self.__number
     assert False
@@ -317,6 +327,8 @@ class Handler:
       self.__next_node_state = Node.STUCK
     elif self.__end_state.isFailedEnd():
       self.__next_node_state = Node.PROOF_END_FAILED
+    elif self.__end_state.isError():
+      self.__next_node_state = Node.ERROR
     else:
       self.__next_node_state = Node.PROOF_END
 
@@ -418,6 +430,7 @@ class StdErrParser:
 
   STR_STUCK = 1
   STR_FAILED_END = 2
+  STR_ERROR = 3
 
   def __init__(self, end_state, log, message_thread):
     self.__end_state = end_state
@@ -426,6 +439,7 @@ class StdErrParser:
     self.__string_finder = StringFinder(
         [
             (b'WarnStuckClaimState', StdErrParser.STR_STUCK),
+            (b'ErrorException', StdErrParser.STR_ERROR),
             (b'The proof has reached the final configuration, but the claimed implication is not valid.', StdErrParser.STR_FAILED_END),
         ])
 
@@ -437,6 +451,8 @@ class StdErrParser:
       self.__message_thread.add(self.__end_state.setStuck)
     elif StdErrParser.STR_FAILED_END in found:
       self.__message_thread.add(self.__end_state.setFailedEnd)
+    elif StdErrParser.STR_ERROR in found:
+      self.__message_thread.add(self.__end_state.setError)
 
   def prepareForStep(self):
     self.__string_finder.reset()
@@ -1127,17 +1143,18 @@ class Display:
       w.setFocused_UI(False)
     self.currentWindow_UI().setFocused_UI(True)
 
-    assert curses.COLS > Display.TREE_MIN_COLS + Display.WINDOW_MIN_COLS
+    lines, cols = self.__stdscr.getmaxyx()
+    assert cols > Display.TREE_MIN_COLS + Display.WINDOW_MIN_COLS
     start_cols = 0
     end_cols = start_cols + Display.TREE_MIN_COLS
-    self.__tree_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
+    self.__tree_window.draw_UI(start_cols, 0, end_cols, lines - 2)
     start_cols = end_cols + 1
     end_cols = start_cols + Display.SUBTREE_MIN_COLS
-    self.__subtree_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
+    self.__subtree_window.draw_UI(start_cols, 0, end_cols, lines - 2)
     start_cols = end_cols + 1
-    end_cols = curses.COLS - 1
-    self.__konfig_window.draw_UI(start_cols, 0, end_cols, curses.LINES - 2)
-    self.__stdscr.addstr(curses.LINES - 1, 0, "F10-Quit  F9-Repaint")
+    end_cols = cols - 1
+    self.__konfig_window.draw_UI(start_cols, 0, end_cols, lines - 2)
+    self.__stdscr.addstr(lines - 1, 0, "F10-Quit  F9-Repaint")
     self.__stdscr.refresh()
 
   def tab_UI(self):
