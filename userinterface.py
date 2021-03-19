@@ -1,9 +1,9 @@
 import curses
 import indent
-import threading
+import time
 
 #-------------------------------------
-#           UI
+#           Display
 #-------------------------------------
 
 class Window:
@@ -452,3 +452,27 @@ class Display:
     if self.__current_window_index >= len(self.__all_window_events):
       self.__current_window_index = 0
     self.__update_UI()
+
+#-------------------------------------
+#           COMMUNICATION
+#-------------------------------------
+
+class KeyboardReader:
+  def __init__(self, message_thread, ui_message_thread, connector, window, assertOnUIThread):
+    self.__message_thread = message_thread
+    self.__ui_message_thread = ui_message_thread
+    self.__connector = connector
+    self.__window = window
+    self.__assertOnUIThread = assertOnUIThread
+  
+  def maybeReadKey_UI(self):
+    try:
+      self.__assertOnUIThread()
+      c = self.__window.getch()
+      if c == -1:
+        time.sleep(0.1)
+        return
+      self.__message_thread.add(self.__connector.keyEvent, c)
+    finally:
+      self.__ui_message_thread.add(self.maybeReadKey_UI)
+

@@ -281,28 +281,6 @@ class TreeChangeListener:
     self.__display.update()
 
 #-------------------------------------
-#           COMMUNICATION
-#-------------------------------------
-
-class KeyboardReader:
-  def __init__(self, message_thread, ui_message_thread, connector, window):
-    self.__message_thread = message_thread
-    self.__ui_message_thread = ui_message_thread
-    self.__connector = connector
-    self.__window = window
-  
-  def maybeReadKey_UI(self):
-    try:
-      assertOnUIThread()
-      c = self.__window.getch()
-      if c == -1:
-        time.sleep(0.1)
-        return
-      self.__message_thread.add(self.__connector.keyEvent, c)
-    finally:
-      self.__ui_message_thread.add(self.maybeReadKey_UI)
-
-#-------------------------------------
 #       Connecting everything
 #-------------------------------------
 
@@ -378,8 +356,8 @@ def main(argv, live, error_handler, stdscr):
 
   connector = ConnectEverything(live, d, ui_message_thread)
 
-  keyboard_reader = KeyboardReader(
-      message_thread, ui_message_thread, connector, stdscr)
+  keyboard_reader = userinterface.KeyboardReader(
+      message_thread, ui_message_thread, connector, stdscr, assertOnUIThread)
   ui_message_thread.add(keyboard_reader.maybeReadKey_UI)
 
   try:
