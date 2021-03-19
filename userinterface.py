@@ -82,6 +82,14 @@ class Window:
       self.assertConsistent_UI()
       self.__callLineChangeListeners()
 
+  def home_UI(self):
+    self._assertOnUIThread()
+    self.assertConsistent_UI()
+    self.__currentY = 0
+    self.__offsetY = 0
+    self.assertConsistent_UI()
+    self.__callLineChangeListeners()
+
   def down_UI(self):
     self._assertOnUIThread()
     self.assertConsistent_UI()
@@ -113,6 +121,22 @@ class Window:
         self.__currentY = max_line
       if self.__currentY - lines_but_one > self.__offsetY:
         self.__offsetY = self.__currentY - lines_but_one
+    finally:
+      self.assertConsistent_UI()
+      self.__callLineChangeListeners()
+
+  def end_UI(self):
+    self._assertOnUIThread()
+    self.assertConsistent_UI()
+    try:
+      self.__currentY = len(self.__lines) - 1
+      if self.__currentY < 0:
+        self.__currentY = 0
+        self.__offsetY = 0
+        return
+      self.__offsetY = self.__currentY - (self.availableY_UI() - 1)
+      if self.__offsetY < 0:
+        self.__offsetY = 0
     finally:
       self.assertConsistent_UI()
       self.__callLineChangeListeners()
@@ -361,6 +385,11 @@ class WindowEvents:
     self.__window.previousPage_UI()
     self.__display.update()
 
+  def home_UI(self):
+    self.__assertOnUIThread()
+    self.__window.home_UI()
+    self.__display.update()
+
   def down_UI(self):
     self.__assertOnUIThread()
     self.__window.down_UI()
@@ -369,6 +398,11 @@ class WindowEvents:
   def nextPage_UI(self):
     self.__assertOnUIThread()
     self.__window.nextPage_UI()
+    self.__display.update()
+
+  def end_UI(self):
+    self.__assertOnUIThread()
+    self.__window.end_UI()
     self.__display.update()
 
   def setFocused_UI(self, focused):

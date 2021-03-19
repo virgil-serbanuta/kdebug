@@ -305,6 +305,12 @@ class ConnectEverything:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().previousPage_UI())
     elif c == curses.KEY_NPAGE:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().nextPage_UI())
+    elif c == curses.KEY_HOME:
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().home_UI())
+    elif c == curses.KEY_END:
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().end_UI())
+    elif c == ' ':
+      self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().space_UI())
     elif c == curses.ascii.TAB:
       self.__ui_message_thread.add(self.__windows.tab_UI)
     elif c == curses.KEY_BTAB:
