@@ -1,4 +1,3 @@
-from os import error
 import threading
 
 #-------------------------------------
@@ -44,3 +43,14 @@ class MessageThread:
 
       for (first, firstArgs, firstKwrds) in messages:
         first(*firstArgs, **firstKwrds)
+
+class Listeners:
+  def __init__(self):
+    self.__listeners = []
+
+  def add(self, listener, *args, **kwrds):
+    self.__listeners.append((listener, args, kwrds))
+
+  def notify(self):
+    for (listener, args, kwrds) in self.__listeners:
+      listener(*args, **kwrds)

@@ -52,6 +52,7 @@ class StdErrParser:
         [
             (b'WarnStuckClaimState', StdErrParser.STR_STUCK),
             (b'ErrorException', StdErrParser.STR_ERROR),
+            (b'ErrorDecidePredicateUnknown', StdErrParser.STR_ERROR),
             (b'The proof has reached the final configuration, but the claimed implication is not valid.', StdErrParser.STR_FAILED_END),
         ])
 

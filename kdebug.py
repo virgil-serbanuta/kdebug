@@ -82,7 +82,7 @@ class Handler:
     self.__unknown_konfigs = []
     self.__parsers = []
     self.__nodes_seen = set([])
-    self.__node_tree = prooftree.NodeTree(0, message_thread)
+    self.__node_tree = prooftree.NodeTree(0, message_thread, userinterface.NodeUIData)
     self.__last_config_number = -1
     self.__next_node_state = prooftree.Node.NORMAL
     self.__life = life
@@ -273,13 +273,6 @@ def runProcessWatcher(life, error_handler, process):
       target=ProcessWatcher(life, process).run,
       daemon=True)
 
-class TreeChangeListener:
-  def __init__(self, display):
-    self.__display = display
-
-  def onChange(self):
-    self.__display.update()
-
 #-------------------------------------
 #       Connecting everything
 #-------------------------------------
@@ -309,7 +302,7 @@ class ConnectEverything:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().home_UI())
     elif c == curses.KEY_END:
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().end_UI())
-    elif c == ' ':
+    elif c == ord(' '):
       self.__ui_message_thread.add(lambda: self.__windows.currentWindow_UI().space_UI())
     elif c == curses.ascii.TAB:
       self.__ui_message_thread.add(self.__windows.tab_UI)
@@ -358,7 +351,7 @@ def main(argv, live, error_handler, stdscr):
       assertOnUIThread)
   d.update()
 
-  handler.nodeTree().addChangeListener(TreeChangeListener(d))
+  handler.nodeTree().getChangeListeners().add(d.update)
 
   connector = ConnectEverything(live, d, ui_message_thread)
 

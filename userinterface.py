@@ -2,6 +2,8 @@ import curses
 import indent
 import time
 
+import messages
+
 #-------------------------------------
 #           Display
 #-------------------------------------
@@ -100,6 +102,10 @@ class Window:
       self.__offsetY += 1
     self.assertConsistent_UI()
     self.__callLineChangeListeners()
+  
+  def space_UI(self):
+    self._assertOnUIThread()
+    pass
 
   def nextPage_UI(self):
     self._assertOnUIThread()
@@ -249,10 +255,15 @@ class TreeWindow(Window):
     self.__node_tree = node_tree
     self.__line_number_to_id = {}
     self.__node_change_listeners = []
+    self.__last_line = 0
     ui_messages.add(
       self.addLineChangeListener_UI,
       self.__onLineChange)
     ui_messages.add(self.setTitle_UI, 'Tree')
+
+  def space_UI(self):
+    node_id = self.__line_number_to_id[self.__last_line]
+    self.__node_tree.findNode(node_id).getUIData().toggleCollapsed()
 
   def draw_UI(self, xMin, yMin, xMax, yMax):
     self._assertOnUIThread()
@@ -269,10 +280,14 @@ class TreeWindow(Window):
     self.__node_change_listeners.append(listener)
 
   def __treeLines(self, indent, tree, output):
+    collapsed = tree.startNode().getUIData().isCollapsed()
     display = []
     if indent:
       display = [l for l in indent[:-1]]
-    display.append('+- ')
+    if collapsed:
+      display.append('*- ')
+    else:
+      display.append('+- ')
     if tree.startNode().number() == tree.endNode().number():
       display.append(str(tree.startNode()))
     else:
@@ -282,7 +297,7 @@ class TreeWindow(Window):
     output.append((tree.getId(), ''.join(display)))
 
     nextIndent = [l for l in indent]
-    if tree.children():
+    if tree.children() and not collapsed:
       nextIndent.append('| ')
       for c in tree.children()[:-1]:
         self.__treeLines(nextIndent, c, output)
@@ -290,6 +305,7 @@ class TreeWindow(Window):
       self.__treeLines(nextIndent, tree.children()[-1], output)
 
   def __onLineChange(self, new_line):
+    self.__last_line = new_line
     node_id = self.__line_number_to_id[new_line]
     for listener in self.__node_change_listeners:
       listener(node_id)
@@ -405,6 +421,11 @@ class WindowEvents:
     self.__window.end_UI()
     self.__display.update()
 
+  def space_UI(self):
+    self.__assertOnUIThread()
+    self.__window.space_UI()
+    self.__display.update()
+
   def setFocused_UI(self, focused):
     self.__assertOnUIThread()
     self.__window.setFocused_UI(focused)
@@ -510,3 +531,17 @@ class KeyboardReader:
     finally:
       self.__ui_message_thread.add(self.maybeReadKey_UI)
 
+class NodeUIData:
+  def __init__(self):
+    self.__collapsed = False
+    self.__change_listeners = messages.Listeners()
+
+  def getChangeListeners(self):
+    return self.__change_listeners
+
+  def toggleCollapsed(self):
+    self.__collapsed = not self.__collapsed
+    self.__change_listeners.notify()
+
+  def isCollapsed(self):
+    return self.__collapsed
