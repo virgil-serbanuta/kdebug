@@ -2,12 +2,14 @@
 
 import curses
 import curses.ascii
+import os
 import subprocess
 import sys
+import tempfile
 import threading
-import time
 
 import errors
+import graph
 import messages
 import output
 import prooftree
@@ -15,6 +17,14 @@ import userinterface
 
 debug = []
 UI_THREAD = None
+TEMP_DIR_NAME = None
+LOG_FILE = '/mnt/data/tmp/debug.log'
+
+def graphFileNoExtension():
+  return os.path.join(TEMP_DIR_NAME, 'graph')
+
+def graphFile():
+  return "%s.svg" % graphFileNoExtension()
 
 def assertOnUIThread():
   assert threading.current_thread().ident == UI_THREAD.ident
@@ -87,6 +97,7 @@ class Handler:
     self.__next_node_state = prooftree.Node.NORMAL
     self.__life = life
     self.__end_state = end_state
+    self.__ui_graph = graph.UIGraph()
 
   def onAtPrompt(self, config_number):
     self.__log.write(b'onAtPrompt\n')
@@ -142,6 +153,9 @@ class Handler:
   def onKonfig(self, node_id, konfig_lines):
     self.__node_tree.findNode(node_id).setKonfig(konfig_lines)
 
+  def onGraph(self):
+    self.__ui_graph.setGraph(graph.parseGraph(graphFile()))
+
   def setParsers(self, parsers):
     self.__parsers = parsers
 
@@ -159,6 +173,9 @@ class Handler:
   def nodeTree(self):
     return self.__node_tree
 
+  def graph(self):
+    return self.__ui_graph
+
   def __restartIfWaitingAtPrompt(self):
     if self.__state == Handler.PROMPT_IDLE:
       self.onAtPrompt(self.__last_config_number)
@@ -170,6 +187,10 @@ class Handler:
   def __parsersPrepareForKonfig(self):
     for p in self.__parsers:
       p.prepareForKonfig()
+
+  def __parsersPrepareForGraph(self):
+    for p in self.__parsers:
+      p.prepareForGraph()
 
   def __getKonfigIfNeeded(self):
     while self.__unknown_konfigs:
@@ -190,6 +211,7 @@ class Handler:
 
       self.__pending_commands.append(lambda: self.__selectConfig(node_id))
       self.__pending_commands.append(self.__step)
+      self.__pending_commands.append(self.__graph)
 
       return True
     return False
@@ -205,6 +227,10 @@ class Handler:
   def __konfig(self):
     self.__parsersPrepareForKonfig()
     self.__sendCommand(b'konfig\n')
+
+  def __graph(self):
+    self.__parsersPrepareForGraph()
+    self.__sendCommand(bytes('graph expanded %s svg\n' % graphFileNoExtension(), 'ascii'))
 
   def __sendCommand(self, command):
     self.__stdin.write(command)
@@ -321,7 +347,7 @@ class ConnectEverything:
 def main(argv, live, error_handler, stdscr):
   stdscr.nodelay(True)
 
-  log = open('debug.log', 'wb')
+  log = open(LOG_FILE, 'wb')
 
   message_thread = messages.MessageThread(live, error_handler)
   live.setMessageThread(message_thread)
@@ -345,6 +371,7 @@ def main(argv, live, error_handler, stdscr):
   d = userinterface.Display(
       stdscr,
       handler.nodeTree(),
+      handler.graph(),
       ui_message_thread,
       message_thread,
       handler,
@@ -352,6 +379,7 @@ def main(argv, live, error_handler, stdscr):
   d.update()
 
   handler.nodeTree().getChangeListeners().add(d.update)
+  handler.graph().getChangeListeners().add(d.update)
 
   connector = ConnectEverything(live, d, ui_message_thread)
 
@@ -374,10 +402,13 @@ def main(argv, live, error_handler, stdscr):
 
 if __name__ == "__main__":
   try:
-    live = Life()  # Live is life.
-    error_handler = errors.ErrorHandler(live)
-    curses.wrapper(lambda stdscr : main(sys.argv[1:], live, error_handler, stdscr))
+    with tempfile.TemporaryDirectory() as tmp_dir_name:
+      TEMP_DIR_NAME = tmp_dir_name
+      live = Life()  # Live is life.
+      error_handler = errors.ErrorHandler(live)
+      curses.wrapper(lambda stdscr : main(sys.argv[1:], live, error_handler, stdscr))
   finally:
     print('***********************************')
     print('\n'.join(debug))
     print('\n'.join(error_handler.debugMessages()))
+    print('Log file: %s' % LOG_FILE)

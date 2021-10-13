@@ -250,9 +250,10 @@ class Window:
       listener(self.__currentY)
 
 class TreeWindow(Window):
-  def __init__(self, stdscr, node_tree, ui_messages, assertOnUIThread):
+  def __init__(self, stdscr, node_tree, graph, ui_messages, assertOnUIThread):
     super(TreeWindow, self).__init__(stdscr, assertOnUIThread)
     self.__node_tree = node_tree
+    self.__graph = graph
     self.__line_number_to_id = {}
     self.__node_change_listeners = []
     self.__last_line = 0
@@ -288,12 +289,20 @@ class TreeWindow(Window):
       display.append('*- ')
     else:
       display.append('+- ')
+
     if tree.startNode().number() == tree.endNode().number():
       display.append(str(tree.startNode()))
     else:
       display.append(str(tree.startNode()))
       display.append('-')
       display.append(str(tree.endNode()))
+
+    edgeName = self.__graph.incomingEdge(tree.startNode().number())
+    if (edgeName):
+      display.append('  (')
+      display.append(edgeName)
+      display.append(')')
+
     output.append((tree.getId(), ''.join(display)))
 
     nextIndent = [l for l in indent]
@@ -311,9 +320,10 @@ class TreeWindow(Window):
       listener(node_id)
 
 class SubTreeWindow(Window):
-  def __init__(self, stdscr, node_tree, ui_message_thread, assertOnUIThread):
+  def __init__(self, stdscr, node_tree, graph, ui_message_thread, assertOnUIThread):
     super(SubTreeWindow, self).__init__(stdscr, assertOnUIThread)
     self.__node_tree = node_tree
+    self.__graph = graph
     self.__current_node_tree = node_tree
     self.__line_number_to_id = {}
     self.__node_change_listeners = []
@@ -331,6 +341,7 @@ class SubTreeWindow(Window):
     self.__line_number_to_id = {}
     for line_number in range(0, len(nodes_with_ids)):
       self.__line_number_to_id[line_number] = nodes_with_ids[line_number][0]
+    
     lines = [line for (_, line) in nodes_with_ids]
     self.setDrawLines_UI(lines)
 
@@ -344,7 +355,13 @@ class SubTreeWindow(Window):
 
   def __treeLines(self, tree, output):
     for node in tree.nodes():
-      output.append((node.number(), str(node)))
+      display = [str(node)]
+      edgeName = self.__graph.incomingEdge(node.number())
+      if (edgeName):
+        display.append('  (')
+        display.append(edgeName)
+        display.append(')')
+      output.append((node.number(), ''.join(display)))
 
   def __onLineChange(self, new_line):
     node_id = self.__line_number_to_id[new_line]
@@ -432,14 +449,14 @@ class WindowEvents:
 
 class Display:
   TREE_MIN_COLS = 60
-  SUBTREE_MIN_COLS = 10
+  SUBTREE_MIN_COLS = 30
   WINDOW_MIN_COLS = 20
-  def __init__(self, stdscr, node_tree, ui_message_thread, message_thread, handler, assertOnUIThread):
+  def __init__(self, stdscr, node_tree, graph, ui_message_thread, message_thread, handler, assertOnUIThread):
     self.__stdscr = stdscr
     curses.curs_set(False)
-    self.__tree_window = TreeWindow(stdscr, node_tree, ui_message_thread, assertOnUIThread)
+    self.__tree_window = TreeWindow(stdscr, node_tree, graph, ui_message_thread, assertOnUIThread)
     self.__tree_window_events = WindowEvents(self.__tree_window, self, assertOnUIThread)
-    self.__subtree_window = SubTreeWindow(stdscr, node_tree, ui_message_thread, assertOnUIThread)
+    self.__subtree_window = SubTreeWindow(stdscr, node_tree, graph, ui_message_thread, assertOnUIThread)
     self.__subtree_window_events = WindowEvents(self.__subtree_window, self, assertOnUIThread)
     self.__konfig_window = KonfigWindow(stdscr, node_tree, ui_message_thread, message_thread, handler, assertOnUIThread)
     self.__konfig_window_events = WindowEvents(self.__konfig_window, self, assertOnUIThread)

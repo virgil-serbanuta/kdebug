@@ -75,11 +75,16 @@ class StdErrParser:
     self.__string_finder.reset()
     self.__message_thread.add(self.__end_state.reset)
 
+  def prepareForGraph(self):
+    self.__string_finder.reset()
+    self.__message_thread.add(self.__end_state.reset)
+
 class OutputParser:
   STARTING = 0
   AT_PROMPT = 1
   STEPPING = 2
   KONFIG = 3
+  GRAPH = 4
 
   STATE_START = 0
   STATE_NUMBER = 1
@@ -131,6 +136,10 @@ class OutputParser:
             (b'\nConfig at node ', OutputParser.STR_CONFIG_START_before_number),
             (OutputParser.BYTES_PREFIX + b' is:', OutputParser.STR_CONFIG_START_after_number)
         ])
+    self.__graph_string_finder = StringFinder([
+            (b'\nKore (', OutputParser.STR_PROMPT_Kore_p),
+            (OutputParser.BYTES_PREFIX + b')> ', OutputParser.STR_PROMPT_Kore_pnp_gt_),
+        ])
 
   def process(self, byte, log=True):
     if log:
@@ -142,6 +151,8 @@ class OutputParser:
       self.__processWaitForPromptStepping(byte)
     elif self.__state == OutputParser.KONFIG:
       self.__processWaitForPromptKonfig(byte)
+    elif self.__state == OutputParser.GRAPH:
+      self.__processWaitForPromptGraph(byte)
     else:
       assert False, ("%s %d" % ([byte], self.__state))
 
@@ -157,6 +168,14 @@ class OutputParser:
   def prepareForKonfig(self):
     self.__log.write(b'Reset Konfig\n')
     self.__state = OutputParser.KONFIG
+    self.__substate = OutputParser.STATE_START
+    self.__string_finder.reset()
+    self.process(b'\n')
+
+  # TODO: Called from different thread, make it thread safe.
+  def prepareForGraph(self):
+    self.__log.write(b'Reset Graph\n')
+    self.__state = OutputParser.GRAPH
     self.__substate = OutputParser.STATE_START
     self.__string_finder.reset()
     self.process(b'\n')
@@ -231,6 +250,18 @@ class OutputParser:
           self.__konfig_line = []
       else:
         self.__konfig_line.append(byte)
+
+  def __processWaitForPromptGraph(self, byte):
+    found = self.__graph_string_finder.processByte(byte)
+
+    self.__log.write(bytes(str(found), 'ascii'))
+    if self.__processPromptState(found):
+      self.__log.write(b'processPromptState')
+      self.__message_thread.add(self.__handler.onGraph)
+      return
+    if self.__processNumber(byte, self.__graph_string_finder):
+      self.__log.write(b'processNumber')
+      return
 
   def __processWaitForPromptStepping(self, byte):
     found = self.__string_finder.processByte(byte)

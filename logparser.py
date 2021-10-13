@@ -21,10 +21,18 @@ def extract_indented(lines, start):
 def extract_inner_entries(entries, start, context_size):
     current = start
     while current < len(entries):
-        if len(entries[current].context()) <= context_size:
+        if  (   len(entries[current].context()) <= context_size
+            or  is_top_level(entries[current].context())
+            ):
             return (current, entries[start:current])
         current += 1
     return (current, entries[start:current])
+
+def is_top_level(context):
+    for c in context:
+        if not isinstance(c, GenericContext):
+            return False
+    return True
 
 def checkContextPrefixList(entry, children):
     entry_context = entry.context()
@@ -72,6 +80,9 @@ class FileLocation(object):
         self.__start_column = start_column
         self.__end_line = end_line
         self.__end_column = end_column
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def __str__(self):
         if self.__end_line < 0:
@@ -260,6 +271,12 @@ class DebugAttemptEquation(LogEntry):
     def termKore(self):
         return self.__term_kore
 
+    def __repr__(self):
+        return 'DebugAttemptEquation(context=%s, equation_location=%s, term_kore=%s)' % (repr(self.__context), repr(self.__equation_location), repr(self.__term_kore))
+
+    def __str__(self):
+        return repr(self)
+
 class EquationIsApplicable(LogEntry):
     PREFIX = 'equation is applicable'
     def __init__(self, context):
@@ -271,64 +288,103 @@ class EquationIsApplicable(LogEntry):
 class EquationIsNotApplicable(LogEntry):
     PREFIX = 'equation is not applicable'
 
-    EQUATION_REQUIREMENT_PREFIX = 'could not infer the equation requirement:'
+    @staticmethod
+    def parse(context, lines):
+        current_line = 0
+
+        if lines[current_line].startswith(EquationIsNotApplicableRequirement.EQUATION_REQUIREMENT_PREFIX):
+            return EquationIsNotApplicableRequirement.parse(context, lines)
+        if lines[current_line].startswith(EquationIsNotApplicableMatch.EQUATION_MATCH_PREFIX):
+            return EquationIsNotApplicableMatch.parse(context, lines)
+        if lines[current_line].startswith(EquationIsNotApplicableApplyMatch.EQUATION_MATCH_PREFIX):
+            return EquationIsNotApplicableApplyMatch.parse(context, lines)
+        assert False, [lines[current_line]]
+
+    # def __init__(self, context):
+    #     self.__context = context
+
+    # def context(self):
+    #     return self.__context
+
+class EquationIsNotApplicableRequirement(EquationIsNotApplicable):
+    EQUATION_REQUIREMENT_PREFIX = 'Could not infer the equation requirement:'
     MATCHING_REQUIREMENT_PREFIX = 'and the matching requirement:'
     SIDE_CONDITION_PREFIX = 'from the side condition:'
+    NEGATED_IMPLICATION_PREFIX = 'The negated implication is:'
 
     ACTUAL_SIDE_CONDITION_PREFIX = 'Assumed true condition:'
-    TERM_REPLACEMENTS_PREFIX = 'Term replacements:'
+    TERM_REPLACEMENTS_PREFIX = 'TermLike replacements:'
+    PREDICATE_REPLACEMENTS_PREFIX = 'Predicate replacements:'
     DEFINED_PREFIX = 'Assumed to be defined:'
 
     @staticmethod
     def parse(context, lines):
         current_line = 0
 
-        assert(lines[current_line] == EquationIsNotApplicable.EQUATION_REQUIREMENT_PREFIX), lines[current_line]
+        assert(lines[current_line] == EquationIsNotApplicableRequirement.EQUATION_REQUIREMENT_PREFIX), lines[current_line]
         current_line += 1
         (current_line, equation_kore) = extract_indented(lines, current_line)
         equation_kore = remove_prefix(equation_kore, INDENT)
 
-        assert(lines[current_line] == EquationIsNotApplicable.MATCHING_REQUIREMENT_PREFIX), lines[current_line]
+        assert(lines[current_line] == EquationIsNotApplicableRequirement.MATCHING_REQUIREMENT_PREFIX), lines[current_line]
         current_line += 1
         (current_line, matching_kore) = extract_indented(lines, current_line)
         matching_kore = remove_prefix(matching_kore, INDENT)
 
-        assert(lines[current_line] == EquationIsNotApplicable.SIDE_CONDITION_PREFIX), lines[current_line]
+        assert(lines[current_line] == EquationIsNotApplicableRequirement.SIDE_CONDITION_PREFIX), lines[current_line]
         current_line += 1
         (current_line, side_condition) = extract_indented(lines, current_line)
-
-        assert current_line == len(lines), lines
 
         side_condition = remove_prefix(side_condition, INDENT)
         current_side = 0
 
         assert current_side < len(side_condition), [side_condition, current_side]
-        assert(side_condition[current_side] == EquationIsNotApplicable.ACTUAL_SIDE_CONDITION_PREFIX), side_condition[current_side]
+        assert(side_condition[current_side] == EquationIsNotApplicableRequirement.ACTUAL_SIDE_CONDITION_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, side_condition_kore) = extract_indented(side_condition, current_side)
         side_condition_kore = remove_prefix(side_condition_kore, INDENT)
 
         assert current_side < len(side_condition), [side_condition, current_side]
-        assert(side_condition[current_side] == EquationIsNotApplicable.TERM_REPLACEMENTS_PREFIX), side_condition[current_side]
+        assert(side_condition[current_side] == EquationIsNotApplicableRequirement.TERM_REPLACEMENTS_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, term_replacements) = extract_indented(side_condition, current_side)
         term_replacements = remove_prefix(term_replacements, INDENT)
 
         assert current_side < len(side_condition), [side_condition, current_side]
-        assert(side_condition[current_side] == EquationIsNotApplicable.DEFINED_PREFIX), side_condition[current_side]
+        assert(side_condition[current_side] == EquationIsNotApplicableRequirement.PREDICATE_REPLACEMENTS_PREFIX), side_condition[current_side]
+        current_side += 1
+        (current_side, predicate_replacements) = extract_indented(side_condition, current_side)
+        predicate_replacements = remove_prefix(predicate_replacements, INDENT)
+
+        assert current_side < len(side_condition), [side_condition, current_side]
+        assert(side_condition[current_side] == EquationIsNotApplicableRequirement.DEFINED_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, defined_terms) = extract_indented(side_condition, current_side)
         defined_terms = remove_prefix(defined_terms, INDENT)
 
-        return EquationIsNotApplicable(context, equation_kore, matching_kore, side_condition_kore, term_replacements, defined_terms)
+        assert(lines[current_line] == EquationIsNotApplicableRequirement.NEGATED_IMPLICATION_PREFIX), lines[current_line]
+        current_line += 1
+        (current_line, negated_implication) = extract_indented(lines, current_line)
+        negated_implication = remove_prefix(negated_implication, INDENT)
 
-    def __init__(self, context, equation_kore, matching_kore, side_condition_kore, term_replacements, defined_terms):
+        assert current_line == len(lines), [current_line, lines[current_line], lines]
+
+        return EquationIsNotApplicableRequirement(
+            context,
+            equation_kore,
+            matching_kore,
+            side_condition_kore, term_replacements, predicate_replacements, defined_terms,
+            negated_implication)
+
+    def __init__(self, context, equation_kore, matching_kore, side_condition_kore, term_replacements, predicate_replacements, defined_terms, negated_implication):
         self.__context = context
         self.__equation_kore = equation_kore
         self.__matching_kore = matching_kore
         self.__side_condition_kore = side_condition_kore
         self.__term_replacements = term_replacements
+        self.__predicate_replacements = predicate_replacements
         self.__defined_terms = defined_terms
+        self.__negated_implication = negated_implication
 
     def context(self):
         return self.__context
@@ -345,8 +401,65 @@ class EquationIsNotApplicable(LogEntry):
     def termReplacementsKore(self):
         return self.__term_replacements
 
+    def predicateReplacementsKore(self):
+        return self.__predicate_replacements
+
     def definedTermsKore(self):
         return self.__defined_terms
+
+    def negatedImplicationKore(self):
+        return self.__negated_implication
+
+
+class EquationIsNotApplicableMatch(EquationIsNotApplicable):
+    EQUATION_MATCH_PREFIX = 'equation did not match term'
+
+    @staticmethod
+    def parse(context, lines):
+        current_line = 0
+
+        assert(lines[current_line] == EquationIsNotApplicableMatch.EQUATION_MATCH_PREFIX), lines[current_line]
+        current_line += 1
+
+        assert current_line == len(lines), [current_line, lines[current_line], lines]
+
+        return EquationIsNotApplicableMatch(context)
+
+    def __init__(self, context):
+        self.__context = context
+
+    def context(self):
+        return self.__context
+
+    def __repr__(self):
+        return 'EquationIsNotApplicableMatch(context=%s)' % repr(self.__context)
+
+class EquationIsNotApplicableApplyMatch(EquationIsNotApplicable):
+    EQUATION_MATCH_PREFIX = 'could not apply match result'
+
+    @staticmethod
+    def parse(context, lines):
+        current_line = 0
+
+        assert lines[current_line].startswith(EquationIsNotApplicableApplyMatch.EQUATION_MATCH_PREFIX), lines[current_line]
+        current_line += 1
+
+        (current_line, reasons) = extract_indented(lines, current_line)
+        reasons = remove_prefix(reasons, INDENT)
+
+        assert current_line == len(lines), [current_line, lines[current_line], lines]
+
+        return EquationIsNotApplicableApplyMatch(context, reasons)
+
+    def __init__(self, context, reasons):
+        self.__context = context
+        self.__reasons = reasons
+
+    def context(self):
+        return self.__context
+
+    def reasons(self):
+        return self.__reasons
 
 class GenericLogEntry(LogEntry):
     @staticmethod
@@ -360,24 +473,40 @@ class GenericLogEntry(LogEntry):
 class Organized(object):
     @staticmethod
     def parse(entries, start):
-        assert start <= len(entries)
-        entry = entries[start]
+        (entry, children) = entries[start]
         start += 1
         if isinstance(entry, DebugAttemptEquation):
-            (start, children) = extract_inner_entries(entries, start, len(entry.context()))
-            checkContextPrefixList(entry, children)
-            parsed_children = parseFunctionApplication(children[:-1])
             if start < len(entries):
-                result = entries[start]
-                if isinstance(result, DebugApplyEquation):
-                    assert isinstance(children[-1], EquationIsApplicable)
-                    checkSameContext(entry, result)
+                (next_entry, next_children) = entries[start]
+                if isinstance(next_entry, DebugApplyEquation):
+                    assert not next_children
+                    assert children
+                    assert isinstance(children[-1].main_entry(), EquationIsApplicable)
+                    checkSameContext(entry, next_entry)
                     start += 1
-                    return (start, OrganizedAppliedEquation(entry, parsed_children, children[-1], result))
-            assert isinstance(children[-1], EquationIsNotApplicable)
-            return (start, OrganizedNotAppliedEquation(entry, parsed_children, children[-1]))
+                    return (start, OrganizedAppliedEquation(entry, children[:-1], children[-1], next_entry))
+
+            if isinstance(children[-1].main_entry(), EquationIsNotApplicableApplyMatch):
+                return (start, OrganizedNotAppliedEquationApplyMatch(entry, children[:-1], children[-1])) # 
+            if isinstance(children[-1].main_entry(), EquationIsNotApplicableRequirement):
+                return (start, OrganizedNotAppliedEquationRequirement(entry, children[:-1], children[-1]))
+            if isinstance(children[-1].main_entry(), EquationIsNotApplicableMatch):
+                assert len(children) == 1
+                return (start, OrganizedNotAppliedEquationMatch(entry, children[0]))
+            assert False, [entry, children[-1].main_entry()]
+        elif isinstance(entry, EquationIsNotApplicableMatch):
+            assert not children
+            return (start, OrganizedSimple('Matching failed', entry, 'Failure computation:', children))
+        elif isinstance(entry, EquationIsNotApplicableApplyMatch):
+            return (start, OrganizedSimple('Failing to apply match', entry, 'Failure computation:', children))
+        elif isinstance(entry, EquationIsNotApplicableRequirement):
+            assert not children
+            return (start, OrganizedSimple('Requirement failed', entry, 'Failure computation:', children))
+        elif isinstance(entry, EquationIsApplicable):
+            assert not children
+            return (start, OrganizedSimple('Success', entry, 'Success computation:', children))
         else:
-            assert False, type(entry)
+            assert False, [type(entry), start, entry]
 
     def _indent(self, indent, out):
         for _ in range(0, indent):
@@ -389,12 +518,50 @@ class Organized(object):
             out.append(line)
             out.append('\n')
 
+class OrganizedSimple(Organized):
+    def __init__(self, description, entry, children_description, children):
+        self.__description = description
+        self.__entry = entry
+        self.__children_description = children_description
+        self.__children = children
+
+    def main_entry(self):
+        return self.__entry
+
+    def write(self, context_start, indent, out):
+        self._indent(indent, out)
+        out.append(self.__description)
+        out.append('\n')
+        indent += 1
+
+        self._indent(indent, out)
+        out.append("Context:\n")
+        context = self.__entry.context()
+        for i in range(context_start, len(context)):
+            self._indent(indent + 1, out)
+            context[i].write(out)
+            out.append('\n')
+
+        self._indent(indent, out)
+        out.append(self.__children_description)
+        out.append('\n')
+
+        for c in self.__children:
+            c.write(len(context) + 1, indent + 1, out)
+
+    def writeChildren(self, context_start, indent, out):
+        for c in self.__children:
+            c.write(context_start, indent, out)
+
 class OrganizedAppliedEquation(Organized):
     def __init__(self, debug_attempt_equation, children, debug_apply_equation, result):
         self.__debug_attempt_equation = debug_attempt_equation
         self.__children = children
         self.__debug_apply_equation = debug_apply_equation
         self.__result = result
+
+    def main_entry(self):
+        return self.__debug_attempt_equation
 
     def write(self, context_start, indent, out):
         self._indent(indent, out)
@@ -427,11 +594,14 @@ class OrganizedAppliedEquation(Organized):
         for c in self.__children:
             c.write(len(context) + 1, indent + 1, out)
 
-class OrganizedNotAppliedEquation(Organized):
+class OrganizedNotAppliedEquationRequirement(Organized):
     def __init__(self, debug_attempt_equation, children, debug_not_apply_equation):
         self.__debug_attempt_equation = debug_attempt_equation
         self.__children = children
-        self.__debug_not_apply_equation = debug_not_apply_equation
+        self.__debug_not_apply_equation = debug_not_apply_equation.main_entry()
+
+    def main_entry(self):
+        return self.__debug_attempt_equation
 
     def write(self, context_start, indent, out):
         self._indent(indent, out)
@@ -474,6 +644,10 @@ class OrganizedNotAppliedEquation(Organized):
         self._writeKore(self.__debug_not_apply_equation.termReplacementsKore(), indent + 2, out)
 
         self._indent(indent + 1, out)
+        out.append('Predicate replacements:\n')
+        self._writeKore(self.__debug_not_apply_equation.predicateReplacementsKore(), indent + 2, out)
+
+        self._indent(indent + 1, out)
         out.append('Assumed to be defined:\n')
         self._writeKore(self.__debug_not_apply_equation.definedTermsKore(), indent + 2, out)
 
@@ -481,6 +655,83 @@ class OrganizedNotAppliedEquation(Organized):
         out.append("Computation:\n")
         for c in self.__children:
             c.write(len(context) + 1, indent + 1, out)
+
+class OrganizedNotAppliedEquationMatch(Organized):
+    def __init__(self, debug_attempt_equation, debug_not_apply_equation):
+        self.__debug_attempt_equation = debug_attempt_equation
+        self.__debug_not_apply_equation = debug_not_apply_equation
+
+    def main_entry(self):
+        return self.__debug_attempt_equation
+
+    def write(self, context_start, indent, out):
+        self._indent(indent, out)
+        out.append("Not applying equation, matching failed:\n")
+        indent += 1
+
+        self._indent(indent, out)
+        out.append("Context:\n")
+        context = self.__debug_attempt_equation.context()
+        for i in range(context_start, len(context)):
+            self._indent(indent + 1, out)
+            context[i].write(out)
+            out.append('\n')
+
+        self._indent(indent + 1, out)
+        out.append('Current equation: ')
+        out.append(str(self.__debug_attempt_equation.equationLocation()))
+        out.append('\n')
+
+        self._indent(indent, out)
+        out.append("Term:\n")
+        self._writeKore(self.__debug_attempt_equation.termKore(), indent + 1, out)
+
+        self._indent(indent, out)
+        out.append("Matching computation:\n")
+        self.__debug_not_apply_equation.writeChildren(len(context) + 1, indent + 1, out)
+
+class OrganizedNotAppliedEquationApplyMatch(Organized):
+    def __init__(self, debug_attempt_equation, children, debug_not_apply_equation):
+        self.__debug_attempt_equation = debug_attempt_equation
+        self.__children = children
+        self.__debug_not_apply_equation = debug_not_apply_equation.main_entry()
+
+    def main_entry(self):
+        return self.__debug_attempt_equation
+
+    def write(self, context_start, indent, out):
+        self._indent(indent, out)
+        out.append("Not applying equation, matching failed:\n")
+        indent += 1
+
+        self._indent(indent, out)
+        out.append("Context:\n")
+        context = self.__debug_attempt_equation.context()
+        for i in range(context_start, len(context)):
+            self._indent(indent + 1, out)
+            context[i].write(out)
+            out.append('\n')
+
+        self._indent(indent + 1, out)
+        out.append('Current equation: ')
+        out.append(str(self.__debug_attempt_equation.equationLocation()))
+        out.append('\n')
+
+        self._indent(indent, out)
+        out.append("Term:\n")
+        self._writeKore(self.__debug_attempt_equation.termKore(), indent + 1, out)
+
+        self._indent(indent, out)
+        out.append("Computation:\n")
+        for c in self.__children:
+            c.write(len(context) + 1, indent + 1, out)
+
+        self._indent(indent, out)
+        out.append("Matching failure reasons:\n")
+        for reason in self.__debug_not_apply_equation.reasons():
+            self._indent(indent + 1, out)
+            out.append(reason)
+            out.append('\n')
 
 def parse(contents):
     lines = contents.split('\n')
@@ -504,9 +755,20 @@ def parse(contents):
 
 def parseFunctionApplication(entries):
     start = 0
-    results = []
+    preparsed = []
     while start < len(entries):
-        (start, result) = Organized.parse(entries, start)
+        entry = entries[start]
+        start += 1
+        (start, children) = extract_inner_entries(entries, start, len(entry.context()))
+        checkContextPrefixList(entry, children)
+        parsed_children = parseFunctionApplication(children)
+
+        preparsed.append((entry, parsed_children))
+
+    start = 0
+    results = []
+    while start < len(preparsed):
+        (start, result) = Organized.parse(preparsed, start)
         results.append(result)
     return results
 
