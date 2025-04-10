@@ -4,11 +4,17 @@ import sys
 
 INDENT = '    '
 CONTEXT_PREFIX = '('
+CONTEXT = 'Context:'
 
-def remove_prefix(lines, prefix):
+def remove_prefix(lines, prefix, allowed):
+    result = []
     for l in lines:
-        assert l.startswith(prefix)
-    return [l[len(prefix):] for l in lines]
+        if l.startswith(prefix):
+            l = l[len(prefix):]
+        else:
+            assert l.startswith(allowed), [l, prefix, allowed]
+        result.append(l)
+    return result
 
 def extract_indented(lines, start):
     current = start
@@ -21,10 +27,12 @@ def extract_indented(lines, start):
 def extract_inner_entries(entries, start, context_size):
     current = start
     while current < len(entries):
-        if  (   len(entries[current].context()) <= context_size
-            or  is_top_level(entries[current].context())
-            ):
-            return (current, entries[start:current])
+        context = entries[current].context()
+        if context is not None:
+            if  (   len(entries[current].context()) <= context_size
+                or  is_top_level(entries[current].context())
+                ):
+                return (current, entries[start:current])
         current += 1
     return (current, entries[start:current])
 
@@ -38,9 +46,10 @@ def checkContextPrefixList(entry, children):
     entry_context = entry.context()
     for child in children:
         child_context = child.context()
-        assert len(entry_context) < len(child_context), [entry_context, child_context]
-        for (ec, cc) in zip(entry_context, child_context):
-            assert ec == cc, [ec, cc, entry_context, child_context]
+        if child_context is not None:
+            assert len(entry_context) < len(child_context), [entry_context, child_context]
+            for (ec, cc) in zip(entry_context, child_context):
+                assert ec == cc, [ec, cc, entry_context, child_context]
 
 def checkSameContext(entry1, entry2):
     context1 = entry1.context()
@@ -99,12 +108,17 @@ class Context(object):
                 'InfoReachability': GenericContext.parse,
                 'InfoAttemptUnification': GenericContext.parse,
                 'DebugAttemptEquation': DebugAttemptEquationContext.parse,
+                'LogMessage': GenericContext.parse,
+                'LogJsonRpcServer': GenericContext.parse,
+                'InfoJsonRpcProcessRequest': GenericContext.parse,
+                'DebugAttemptedRewriteRules': GenericContext.parse,
+                'DebugAppliedRewriteRules': GenericContext.parse,
             }
         return cls.ENTRIES
 
     @classmethod
     def parse(cls, line):
-        assert line.startswith(CONTEXT_PREFIX)
+        assert line.startswith(CONTEXT_PREFIX), [line]
         type_end = line.find(')')
         assert type_end >= 0
         assert type_end + 1 < len(line)
@@ -138,14 +152,12 @@ class GenericContext(Context):
 
 class DebugAttemptEquationContext(Context):
     LINE_PREFIX = 'while applying equation at '
-    LINE_SUFFIX = ':'
     @classmethod
     def parse(cls, line):
-        # 'while applying equation at /home/virgil/.cache/bazel/_bazel_virgil/c0f96c7174abcbf704b5e389be3783a0/sandbox/linux-sandbox/1/execroot/__main__/protocol-correctness/proof/execution-proof-helpers.k:326:8-330:64:'
+        # 'while applying equation at /home/virgil/.cache/bazel/_bazel_virgil/c0f96c7174abcbf704b5e389be3783a0/sandbox/linux-sandbox/1/execroot/__main__/protocol-correctness/proof/execution-proof-helpers.k:326:8-330:64'
         assert line.startswith(cls.LINE_PREFIX), [line]
-        assert line.endswith(cls.LINE_SUFFIX), [line]
 
-        location = FileLocation.parse(line[len(cls.LINE_PREFIX):-len(cls.LINE_SUFFIX)])
+        location = FileLocation.parse(line[len(cls.LINE_PREFIX):])
         assert location is not None
         return DebugAttemptEquationContext(location)
 
@@ -167,15 +179,22 @@ class LogEntry(object):
             cls.ENTRIES = {
                 'DebugApplyEquation': DebugApplyEquation.parse,
                 'DebugAttemptEquation': DebugAttemptEquation.parse,
+                'LogMessage': LogMessage.parse,
+                'LogJsonRpcServer': LogJsonRpcServer.parse,
+                'InfoJsonRpcProcessRequest': InfoJsonRpcProcessRequest.parse,
+                'DebugAttemptedRewriteRules': DebugAttemptedRewriteRules.parse,
+                'DebugAppliedRewriteRules': DebugAppliedRewriteRules.parse,
             }
         return cls.ENTRIES
 
     @classmethod
     def parse(cls, lines):
         assert lines
+        if lines[0].startswith('  kore-rpc'):
+            lines = remove_prefix(lines, '  ', CONTEXT)
         if lines[0].startswith('  kore-repl'):
-            lines = remove_prefix(lines, '  ')
-        if not lines[0].startswith('kore-repl'):
+            lines = remove_prefix(lines, '  ', CONTEXT)
+        if not lines[0].startswith('kore-repl') and not lines[0].startswith('kore-rpc'):
             return None
         if not lines[0].endswith('):'):
             return None
@@ -183,7 +202,7 @@ class LogEntry(object):
         assert type_start >= 0
         t = lines[0][type_start + 1:-2]
         if t in cls.entries():
-            return cls.entries()[t](remove_prefix(lines[1:], INDENT))
+            return cls.entries()[t](remove_prefix(lines[1:], INDENT, CONTEXT))
         assert False, [t]
         return GenericLogEntry(lines[1:])
 
@@ -201,25 +220,19 @@ class DebugApplyEquation(LogEntry):
         assert lines
 
         current_line = 0
-        context = []
-        while lines[current_line].startswith(CONTEXT_PREFIX):
-            c = Context.parse(lines[current_line])
-            assert c is not None
-            context.append(c)
-            current_line += 1
+        assert not lines[current_line].startswith(CONTEXT_PREFIX)
         assert lines[current_line].startswith(DebugApplyEquation.APPLIED_PREFIX)
         current_line += 1
         kore = lines[current_line:]
-        kore = remove_prefix(kore, INDENT)
+        kore = remove_prefix(kore, INDENT, CONTEXT)
         assert kore
-        return DebugApplyEquation(context, kore)
+        return DebugApplyEquation(kore)
 
-    def __init__(self, context, kore):
-        self.__context = context
+    def __init__(self, kore):
         self.__kore = kore
 
     def context(self):
-        return self.__context
+        return None
 
     def kore(self):
         return self.__kore
@@ -233,27 +246,38 @@ class DebugAttemptEquation(LogEntry):
         assert lines
 
         current_line = 0
-        context = []
         while lines[current_line].startswith(CONTEXT_PREFIX):
-            c = Context.parse(lines[current_line])
-            assert c is not None
-            context.append(c)
+            # c = Context.parse(lines[current_line])
+            # assert c is not None
+            # context.append(c)
             current_line += 1
         assert current_line < len(lines)
+
+        context_start = current_line
+        while context_start < len(lines):
+            if lines[context_start].startswith(CONTEXT):
+                break
+            context_start += 1
+        assert context_start < len(lines)
+        context = []
+        for line in lines[context_start + 1 : ]:
+            c = Context.parse(line)
+            assert c is not None
+            context.append(c)
 
         if lines[current_line].startswith(DebugAttemptEquation.APPLY_PREFIX):
             assert lines[current_line].endswith(DebugAttemptEquation.APPLY_SUFFIX)
             file_location = FileLocation.parse(lines[current_line][len(DebugAttemptEquation.APPLY_PREFIX):-len(DebugAttemptEquation.APPLY_SUFFIX)])
             current_line += 1
 
-            kore = remove_prefix(lines[current_line:], INDENT)
+            kore = remove_prefix(lines[current_line:context_start], INDENT, CONTEXT)
             assert kore
             return DebugAttemptEquation(context, file_location, kore)
         elif lines[current_line].startswith(EquationIsApplicable.PREFIX):
             return EquationIsApplicable(context)
         elif lines[current_line].startswith(EquationIsNotApplicable.PREFIX):
             current_line += 1
-            return EquationIsNotApplicable.parse(context, lines[current_line:])
+            return EquationIsNotApplicable.parse(context, lines[current_line:context_start])
         else:
             assert False, [lines[current_line]]
 
@@ -324,48 +348,48 @@ class EquationIsNotApplicableRequirement(EquationIsNotApplicable):
         assert(lines[current_line] == EquationIsNotApplicableRequirement.EQUATION_REQUIREMENT_PREFIX), lines[current_line]
         current_line += 1
         (current_line, equation_kore) = extract_indented(lines, current_line)
-        equation_kore = remove_prefix(equation_kore, INDENT)
+        equation_kore = remove_prefix(equation_kore, INDENT, CONTEXT)
 
         assert(lines[current_line] == EquationIsNotApplicableRequirement.MATCHING_REQUIREMENT_PREFIX), lines[current_line]
         current_line += 1
         (current_line, matching_kore) = extract_indented(lines, current_line)
-        matching_kore = remove_prefix(matching_kore, INDENT)
+        matching_kore = remove_prefix(matching_kore, INDENT, CONTEXT)
 
         assert(lines[current_line] == EquationIsNotApplicableRequirement.SIDE_CONDITION_PREFIX), lines[current_line]
         current_line += 1
         (current_line, side_condition) = extract_indented(lines, current_line)
 
-        side_condition = remove_prefix(side_condition, INDENT)
+        side_condition = remove_prefix(side_condition, INDENT, CONTEXT)
         current_side = 0
 
         assert current_side < len(side_condition), [side_condition, current_side]
         assert(side_condition[current_side] == EquationIsNotApplicableRequirement.ACTUAL_SIDE_CONDITION_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, side_condition_kore) = extract_indented(side_condition, current_side)
-        side_condition_kore = remove_prefix(side_condition_kore, INDENT)
+        side_condition_kore = remove_prefix(side_condition_kore, INDENT, CONTEXT)
 
         assert current_side < len(side_condition), [side_condition, current_side]
         assert(side_condition[current_side] == EquationIsNotApplicableRequirement.TERM_REPLACEMENTS_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, term_replacements) = extract_indented(side_condition, current_side)
-        term_replacements = remove_prefix(term_replacements, INDENT)
+        term_replacements = remove_prefix(term_replacements, INDENT, CONTEXT)
 
         assert current_side < len(side_condition), [side_condition, current_side]
         assert(side_condition[current_side] == EquationIsNotApplicableRequirement.PREDICATE_REPLACEMENTS_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, predicate_replacements) = extract_indented(side_condition, current_side)
-        predicate_replacements = remove_prefix(predicate_replacements, INDENT)
+        predicate_replacements = remove_prefix(predicate_replacements, INDENT, CONTEXT)
 
         assert current_side < len(side_condition), [side_condition, current_side]
         assert(side_condition[current_side] == EquationIsNotApplicableRequirement.DEFINED_PREFIX), side_condition[current_side]
         current_side += 1
         (current_side, defined_terms) = extract_indented(side_condition, current_side)
-        defined_terms = remove_prefix(defined_terms, INDENT)
+        defined_terms = remove_prefix(defined_terms, INDENT, CONTEXT)
 
         assert(lines[current_line] == EquationIsNotApplicableRequirement.NEGATED_IMPLICATION_PREFIX), lines[current_line]
         current_line += 1
         (current_line, negated_implication) = extract_indented(lines, current_line)
-        negated_implication = remove_prefix(negated_implication, INDENT)
+        negated_implication = remove_prefix(negated_implication, INDENT, CONTEXT)
 
         assert current_line == len(lines), [current_line, lines[current_line], lines]
 
@@ -418,21 +442,26 @@ class EquationIsNotApplicableMatch(EquationIsNotApplicable):
     def parse(context, lines):
         current_line = 0
 
-        assert(lines[current_line] == EquationIsNotApplicableMatch.EQUATION_MATCH_PREFIX), lines[current_line]
+        assert (lines[current_line].startswith(EquationIsNotApplicableMatch.EQUATION_MATCH_PREFIX)), [lines[current_line]]
+        reason = lines[current_line][len(EquationIsNotApplicableMatch.EQUATION_MATCH_PREFIX) + 1].strip()
         current_line += 1
 
+        if current_line != len(lines):
+            if lines[current_line].startswith(CONTEXT):
+                current_line = len(lines)
         assert current_line == len(lines), [current_line, lines[current_line], lines]
 
-        return EquationIsNotApplicableMatch(context)
+        return EquationIsNotApplicableMatch(context, reason)
 
-    def __init__(self, context):
+    def __init__(self, context, reason):
         self.__context = context
+        self.__reason = reason
 
     def context(self):
         return self.__context
 
     def __repr__(self):
-        return 'EquationIsNotApplicableMatch(context=%s)' % repr(self.__context)
+        return 'EquationIsNotApplicableMatch(context=%s, reason=%s)' % repr(self.__context, repr(self.__reason))
 
 class EquationIsNotApplicableApplyMatch(EquationIsNotApplicable):
     EQUATION_MATCH_PREFIX = 'could not apply match result'
@@ -445,7 +474,7 @@ class EquationIsNotApplicableApplyMatch(EquationIsNotApplicable):
         current_line += 1
 
         (current_line, reasons) = extract_indented(lines, current_line)
-        reasons = remove_prefix(reasons, INDENT)
+        reasons = remove_prefix(reasons, INDENT, CONTEXT)
 
         assert current_line == len(lines), [current_line, lines[current_line], lines]
 
@@ -460,6 +489,67 @@ class EquationIsNotApplicableApplyMatch(EquationIsNotApplicable):
 
     def reasons(self):
         return self.__reasons
+
+class LogMessage(LogEntry):
+    @staticmethod
+    def parse(lines):
+        assert lines
+        return LogMessage(lines)
+
+    def __init__(self, lines):
+        self.__lines = lines
+
+    def context(self):
+        return None
+
+
+class LogJsonRpcServer(LogEntry):
+    @staticmethod
+    def parse(lines):
+        assert lines
+        return LogJsonRpcServer(lines)
+
+    def __init__(self, lines):
+        self.__lines = lines
+
+    def context(self):
+        return None
+
+class InfoJsonRpcProcessRequest(LogEntry):
+    @staticmethod
+    def parse(lines):
+        assert lines
+        return InfoJsonRpcProcessRequest(lines)
+
+    def __init__(self, lines):
+        self.__lines = lines
+
+    def context(self):
+        return None
+
+class DebugAttemptedRewriteRules(LogEntry):
+    @staticmethod
+    def parse(lines):
+        assert lines
+        return DebugAttemptedRewriteRules(lines)
+
+    def __init__(self, lines):
+        self.__lines = lines
+
+    def context(self):
+        return None
+
+class DebugAppliedRewriteRules(LogEntry):
+    @staticmethod
+    def parse(lines):
+        assert lines
+        return DebugAppliedRewriteRules(lines)
+
+    def __init__(self, lines):
+        self.__lines = lines
+
+    def context(self):
+        return None
 
 class GenericLogEntry(LogEntry):
     @staticmethod
@@ -486,6 +576,7 @@ class Organized(object):
                     start += 1
                     return (start, OrganizedAppliedEquation(entry, children[:-1], children[-1], next_entry))
 
+            assert children, [entry]
             if isinstance(children[-1].main_entry(), EquationIsNotApplicableApplyMatch):
                 return (start, OrganizedNotAppliedEquationApplyMatch(entry, children[:-1], children[-1])) # 
             if isinstance(children[-1].main_entry(), EquationIsNotApplicableRequirement):
@@ -505,6 +596,24 @@ class Organized(object):
         elif isinstance(entry, EquationIsApplicable):
             assert not children
             return (start, OrganizedSimple('Success', entry, 'Success computation:', children))
+        elif isinstance(entry, LogMessage):
+            assert not children, [children]
+            return (start, OrganizedSimple('LogMessage', entry, 'No children:', children))
+        elif isinstance(entry, LogJsonRpcServer):
+            assert not children, [children]
+            return (start, OrganizedSimple('LogJsonRpcServer', entry, 'No children:', children))
+        elif isinstance(entry, InfoJsonRpcProcessRequest):
+            assert not children, [children]
+            return (start, OrganizedSimple('InfoJsonRpcProcessRequest', entry, 'No children:', children))
+        elif isinstance(entry, DebugAttemptedRewriteRules):
+            assert not children, [children]
+            return (start, OrganizedSimple('DebugAttemptedRewriteRules', entry, 'No children:', children))
+        elif isinstance(entry, DebugAppliedRewriteRules):
+            assert not children, [children]
+            return (start, OrganizedSimple('DebugAppliedRewriteRules', entry, 'No children:', children))
+        elif isinstance(entry, DebugApplyEquation):
+            assert not children, [children]
+            return (start, OrganizedSimple('DebugApplyEquation', entry, 'No children:', children))
         else:
             assert False, [type(entry), start, entry]
 
@@ -552,6 +661,13 @@ class OrganizedSimple(Organized):
     def writeChildren(self, context_start, indent, out):
         for c in self.__children:
             c.write(context_start, indent, out)
+
+    def __str__(self):
+        return repr(self)
+
+    def __repr__(self):
+        return f'Organized({[self.__description]}, {[self.__entry]})'
+
 
 class OrganizedAppliedEquation(Organized):
     def __init__(self, debug_attempt_equation, children, debug_apply_equation, result):
@@ -740,8 +856,9 @@ def parse(contents):
     for line in lines:
         if not line:
             continue
-        if not line.startswith(INDENT):
+        if not line.startswith(INDENT) and not line.startswith(CONTEXT):
             if current_lines:
+                # print(current_lines)
                 entry = LogEntry.parse(current_lines)
                 assert entry is not None, current_lines
                 entries.append(entry)
@@ -753,13 +870,21 @@ def parse(contents):
         entries.append(entry)
     return entries
 
+def lenNull(ctx):
+    if ctx is None:
+        return 1000
+    return len(ctx)
+
 def parseFunctionApplication(entries):
     start = 0
     preparsed = []
     while start < len(entries):
         entry = entries[start]
         start += 1
-        (start, children) = extract_inner_entries(entries, start, len(entry.context()))
+        if entry.context() is None:
+            preparsed.append((entry, []))
+            continue
+        (start, children) = extract_inner_entries(entries, start, lenNull(entry.context()))
         checkContextPrefixList(entry, children)
         parsed_children = parseFunctionApplication(children)
 
